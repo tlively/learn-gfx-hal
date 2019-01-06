@@ -9,13 +9,15 @@ use gfx_hal::{
   adapter::PhysicalDevice,
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
-  image::{Layout, SubresourceRange, ViewKind},
+  image::{Extent, Layout, SubresourceRange, ViewKind},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
+  pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
     BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc, DepthTest, DescriptorSetLayoutBinding,
     EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet, InputAssemblerDesc, LogicOp, PipelineCreationFlags, PolygonMode,
     Rasterizer, Rect, ShaderStageFlags, Specialization, StencilTest, Viewport,
   },
+  queue::capability::Capability,
   window::{Backbuffer, Extent2D, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, Primitive, QueueFamily, Surface,
 };
@@ -43,7 +45,7 @@ fn main() {
     })
     .next()
     .expect("Couldn't find a graphical Adapter!");
-  let (device, command_queues) = {
+  let (device, command_queues, queue_type, qf_id) = {
     let queue_family = adapter
       .queue_families
       .iter()
@@ -59,7 +61,7 @@ fn main() {
       .take::<Graphics>(queue_family.id())
       .expect("Couldn't take ownership of the QueueGroup!");
     debug_assert!(queue_group.queues.len() > 0);
-    (device, queue_group.queues)
+    (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
   };
   // DESCRIBE
   let (swapchain, extent, backbuffer, format) = {
@@ -128,6 +130,35 @@ fn main() {
   };
   // DESCRIBE
   let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) = create_graphics_pipeline(&device, extent, &render_pass);
+  // DESCRIBE
+  let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
+    frame_images
+      .iter()
+      .map(|(_, image_view)| unsafe {
+        device
+          .create_framebuffer(
+            &render_pass,
+            vec![image_view],
+            Extent {
+              width: extent.width as _,
+              height: extent.height as _,
+              depth: 1,
+            },
+          )
+          .expect("Failed to create a framebuffer!")
+      })
+      .collect()
+  };
+  // DESCRIBE
+  let mut command_pool = {
+    let raw_command_pool = unsafe {
+      device
+        .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
+        .expect("Could not create the raw command pool!")
+    };
+    assert!(Graphics::supported_by(queue_type));
+    unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
+  };
 
   let mut running = true;
   while running {
