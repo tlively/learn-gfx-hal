@@ -1,5 +1,6 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::len_zero)]
+//#![allow(unused)]
 
 #[cfg(feature = "dx12")]
 extern crate gfx_backend_dx12 as back;
@@ -8,233 +9,284 @@ extern crate gfx_backend_metal as back;
 #[cfg(feature = "vulkan")]
 extern crate gfx_backend_vulkan as back;
 
+#[macro_use]
+extern crate log;
+
 use gfx_hal::{
-  adapter::PhysicalDevice,
+  adapter::{Adapter, PhysicalDevice},
   command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
+  error::HostExecutionError,
   format::{Aspects, ChannelType, Format, Swizzle},
   image::{Extent, Layout, SubresourceRange, ViewKind},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{PipelineStage, Rect},
-  queue::{capability::Capability, Submission},
-  window::{Backbuffer, FrameSync, Swapchain, SwapchainConfig},
+  queue::{capability::Capability, CommandQueue, Submission},
+  window::{Backbuffer, Extent2D, FrameSync, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 pub const WINDOW_NAME: &str = "Hello Clear";
-const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-fn main() {
-  env_logger::init();
+pub struct HalState {
+  _instance: back::Instance,
+  _surface: <back::Backend as Backend>::Surface,
+  _adapter: Adapter<back::Backend>,
+  device: back::Device,
+  command_queues: Vec<CommandQueue<back::Backend, Graphics>>,
+  swapchain: <back::Backend as Backend>::Swapchain,
+  extent: Extent2D,
+  render_pass: <back::Backend as Backend>::RenderPass,
+  swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
+  submission_command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
+  image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  in_flight_fences: Vec<<back::Backend as Backend>::Fence>,
+  current_frame: usize,
+}
+impl HalState {
+  const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
-  let mut winit_state = WinitState::default();
-
-  let instance = back::Instance::create(WINDOW_NAME, 1);
-  let mut surface = instance.create_surface(&winit_state.window);
-  let adapter = instance
-    .enumerate_adapters()
-    .into_iter()
-    .find(|a| {
-      a.queue_families
-        .iter()
-        .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
-    })
-    .expect("Couldn't find a graphical Adapter!");
-  let (device, mut command_queues, queue_type, qf_id) = {
-    let queue_family = adapter
-      .queue_families
-      .iter()
-      .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
-      .expect("Couldn't find a QueueFamily with graphics!");
-    let Gpu { device, mut queues } = unsafe {
-      adapter
-        .physical_device
-        .open(&[(&queue_family, &[1.0; 1])])
-        .expect("Couldn't open the PhysicalDevice!")
-    };
-    let queue_group = queues
-      .take::<Graphics>(queue_family.id())
-      .expect("Couldn't take ownership of the QueueGroup!");
-    debug_assert!(queue_group.queues.len() > 0);
-    (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
-  };
-  // DESCRIBE
-  let (mut swapchain, extent, backbuffer, format) = {
-    let (caps, formats, _present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
-    let format = formats.map_or(Format::Rgba8Srgb, |formats| {
-      formats
-        .iter()
-        .find(|format| format.base_format().1 == ChannelType::Srgb)
-        .cloned()
-        .unwrap_or(*formats.get(0).expect("Empty formats list specified!"))
-    });
-    let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end);
-    let extent = swap_config.extent;
-    let (swapchain, backbuffer) = unsafe {
-      device
-        .create_swapchain(&mut surface, swap_config, None)
-        .expect("Failed to create the swapchain!")
-    };
-    (swapchain, extent, backbuffer, format)
-  };
-  // DESCRIBE
-  let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
-    Backbuffer::Images(images) => images
+  pub fn new(window: &Window) -> Self {
+    let instance = back::Instance::create(WINDOW_NAME, 1);
+    // TODO
+    let mut surface = instance.create_surface(window);
+    // TODO
+    let adapter = instance
+      .enumerate_adapters()
       .into_iter()
-      .map(|image| {
-        let image_view = unsafe {
+      .find(|a| {
+        a.queue_families
+          .iter()
+          .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+      })
+      .expect("Couldn't find a graphical Adapter!");
+    // TODO
+    let (device, command_queues, queue_type, qf_id) = {
+      let queue_family = adapter
+        .queue_families
+        .iter()
+        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+        .expect("Couldn't find a QueueFamily with graphics!");
+      let Gpu { device, mut queues } = unsafe {
+        adapter
+          .physical_device
+          .open(&[(&queue_family, &[1.0; 1])])
+          .expect("Couldn't open the PhysicalDevice!")
+      };
+      let queue_group = queues
+        .take::<Graphics>(queue_family.id())
+        .expect("Couldn't take ownership of the QueueGroup!");
+      debug_assert!(queue_group.queues.len() > 0);
+      (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
+    };
+    // TODO
+    let (swapchain, extent, backbuffer, format) = {
+      let (caps, formats, _present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let format = formats.map_or(Format::Rgba8Srgb, |formats| {
+        formats
+          .iter()
+          .find(|format| format.base_format().1 == ChannelType::Srgb)
+          .cloned()
+          .unwrap_or(*formats.get(0).expect("Empty formats list specified!"))
+      });
+      let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end);
+      let extent = swap_config.extent;
+      let (swapchain, backbuffer) = unsafe {
+        device
+          .create_swapchain(&mut surface, swap_config, None)
+          .expect("Failed to create the swapchain!")
+      };
+      (swapchain, extent, backbuffer, format)
+    };
+    // DESCRIBE
+    let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
+      Backbuffer::Images(images) => images
+        .into_iter()
+        .map(|image| {
+          let image_view = unsafe {
+            device
+              .create_image_view(
+                &image,
+                ViewKind::D2,
+                format,
+                Swizzle::NO,
+                SubresourceRange {
+                  aspects: Aspects::COLOR,
+                  levels: 0..1,
+                  layers: 0..1,
+                },
+              )
+              .expect("Couldn't create the image_view for the image!")
+          };
+          (image, image_view)
+        })
+        .collect(),
+      Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
+    };
+    // DESCRIBE
+    let render_pass = {
+      let color_attachment = Attachment {
+        format: Some(format),
+        samples: 1,
+        ops: AttachmentOps {
+          load: AttachmentLoadOp::Clear,
+          store: AttachmentStoreOp::Store,
+        },
+        stencil_ops: AttachmentOps::DONT_CARE,
+        layouts: Layout::Undefined..Layout::Present,
+      };
+      let subpass = SubpassDesc {
+        colors: &[(0, Layout::ColorAttachmentOptimal)],
+        depth_stencil: None,
+        inputs: &[],
+        resolves: &[],
+        preserves: &[],
+      };
+      unsafe {
+        device
+          .create_render_pass(&[color_attachment], &[subpass], &[])
+          .expect("Couldn't create a render pass!")
+      }
+    };
+    // DESCRIBE
+    let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
+      frame_images
+        .iter()
+        .map(|(_, image_view)| unsafe {
           device
-            .create_image_view(
-              &image,
-              ViewKind::D2,
-              format,
-              Swizzle::NO,
-              SubresourceRange {
-                aspects: Aspects::COLOR,
-                levels: 0..1,
-                layers: 0..1,
+            .create_framebuffer(
+              &render_pass,
+              vec![image_view],
+              Extent {
+                width: extent.width as _,
+                height: extent.height as _,
+                depth: 1,
               },
             )
-            .expect("Couldn't create the image_view for the image!")
-        };
-        (image, image_view)
-      })
-      .collect(),
-    Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
-  };
-  // DESCRIBE
-  let render_pass = {
-    let color_attachment = Attachment {
-      format: Some(format),
-      samples: 1,
-      ops: AttachmentOps {
-        load: AttachmentLoadOp::Clear,
-        store: AttachmentStoreOp::Store,
-      },
-      stencil_ops: AttachmentOps::DONT_CARE,
-      layouts: Layout::Undefined..Layout::Present,
+            .expect("Failed to create a framebuffer!")
+        })
+        .collect()
     };
-    let subpass = SubpassDesc {
-      colors: &[(0, Layout::ColorAttachmentOptimal)],
-      depth_stencil: None,
-      inputs: &[],
-      resolves: &[],
-      preserves: &[],
-    };
-    unsafe {
-      device
-        .create_render_pass(&[color_attachment], &[subpass], &[])
-        .expect("Couldn't create a render pass!")
-    }
-  };
-  // DESCRIBE
-  let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-    frame_images
-      .iter()
-      .map(|(_, image_view)| unsafe {
+    // DESCRIBE
+    let mut command_pool = {
+      let raw_command_pool = unsafe {
         device
-          .create_framebuffer(
-            &render_pass,
-            vec![image_view],
-            Extent {
-              width: extent.width as _,
-              height: extent.height as _,
-              depth: 1,
-            },
-          )
-          .expect("Failed to create a framebuffer!")
-      })
-      .collect()
-  };
-  // DESCRIBE
-  let mut command_pool = {
-    let raw_command_pool = unsafe {
-      device
-        .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
-        .expect("Could not create the raw command pool!")
+          .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
+          .expect("Could not create the raw command pool!")
+      };
+      assert!(Graphics::supported_by(queue_type));
+      unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
     };
-    assert!(Graphics::supported_by(queue_type));
-    unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
-  };
-  // DESCRIBE
-  let submission_command_buffers: Vec<_> = unsafe {
-    swapchain_framebuffers
-      .iter()
-      .map(|fb| {
-        let mut command_buffer: CommandBuffer<back::Backend, Graphics, MultiShot, Primary> = command_pool.acquire_command_buffer();
+    // DESCRIBE
+    let submission_command_buffers: Vec<_> = unsafe {
+      swapchain_framebuffers
+        .iter()
+        .map(|fb| {
+          let mut command_buffer: CommandBuffer<back::Backend, Graphics, MultiShot, Primary> = command_pool.acquire_command_buffer();
+          command_buffer.begin(true);
+          let render_area = Rect {
+            x: 0,
+            y: 0,
+            w: extent.width as i16,
+            h: extent.height as i16,
+          };
+          let cornflower_blue = [0.259, 0.259, 0.435, 1.0];
+          let clear_values = [ClearValue::Color(ClearColor::Float(cornflower_blue))];
+          command_buffer.begin_render_pass_inline(&render_pass, fb, render_area, clear_values.iter());
+          command_buffer.finish();
+          command_buffer
+        })
+        .collect()
+    };
+    // DESCRIBE
+    let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
+      let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+      let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+      let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
+      for _ in 0..Self::MAX_FRAMES_IN_FLIGHT {
+        image_available_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
+        render_finished_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
+        in_flight_fences.push(device.create_fence(true).expect("Could not create a fence!"));
+      }
+      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+    };
+
+    Self {
+      _instance: instance,
+      _surface: surface,
+      _adapter: adapter,
+      device,
+      command_queues,
+      swapchain,
+      extent,
+      render_pass,
+      swapchain_framebuffers,
+      submission_command_buffers,
+      image_available_semaphores,
+      render_finished_semaphores,
+      in_flight_fences,
+      current_frame: 0,
+    }
+  }
+
+  /// Waits until the device goes idle.
+  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
+    self.device.wait_idle()
+  }
+
+  /// Draw a frame that's just cleared to the color specified.
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+    unsafe {
+      // give shorter names to the synchronizations for the current frame
+      let fence = &self.in_flight_fences[self.current_frame];
+      let image_available = &self.image_available_semaphores[self.current_frame];
+      let render_finished = &self.render_finished_semaphores[self.current_frame];
+
+      // Wait and acquire an image index, which lets us pick out the correct command buffer.
+      self
+        .device
+        .wait_for_fence(fence, core::u64::MAX)
+        .map_err(|_| "Failed to wait on the fence!")?;
+      self.device.reset_fence(fence).map_err(|_| "Couldn't reset the fence!")?;
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      let i = image_index as usize;
+
+      // Fill up that command buffer with the instructions to clear the screen
+      {
+        let command_buffer = &mut self.submission_command_buffers[i];
         command_buffer.begin(true);
         let render_area = Rect {
           x: 0,
           y: 0,
-          w: extent.width as i16,
-          h: extent.height as i16,
+          w: self.extent.width as i16,
+          h: self.extent.height as i16,
         };
-        let cornflower_blue = [0.259, 0.259, 0.435, 1.0];
-        let clear_values = [ClearValue::Color(ClearColor::Float(cornflower_blue))];
-        command_buffer.begin_render_pass_inline(&render_pass, fb, render_area, clear_values.iter());
+        let clear_values = [ClearValue::Color(ClearColor::Float(color))];
+        command_buffer.begin_render_pass_inline(&self.render_pass, &self.swapchain_framebuffers[i], render_area, clear_values.iter());
         command_buffer.finish();
-        command_buffer
-      })
-      .collect()
-  };
-  // DESCRIBE
-  let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
-    let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-    let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-    let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
-    for _ in 0..MAX_FRAMES_IN_FLIGHT {
-      image_available_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-      render_finished_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-      in_flight_fences.push(device.create_fence(true).expect("Could not create a fence!"));
-    }
-    (image_available_semaphores, render_finished_semaphores, in_flight_fences)
-  };
+      }
 
-  //
-
-  let mut current_frame = 0;
-
-  let mut running = true;
-  while running {
-    winit_state.events_loop.poll_events(|event| match event {
-      Event::WindowEvent {
-        event: WindowEvent::CloseRequested,
-        ..
-      } => running = false,
-      _ => (),
-    });
-    if !running {
-      device.wait_idle().expect("Queues aren't going to idle!");
-      break;
-    }
-
-    // Draw a frame
-    unsafe {
-      device
-        .wait_for_fence(&in_flight_fences[current_frame], std::u64::MAX)
-        .expect("Failed to wait on the fence!");
-      device.reset_fence(&in_flight_fences[current_frame]).expect("Couldn't reset the fence!");
-      let image_index = swapchain
-        .acquire_image(std::u64::MAX, FrameSync::Semaphore(&image_available_semaphores[current_frame]))
-        .expect("Couldn't acquire an image from the swapchain!");
-      let i = image_index as usize;
+      // Submit the buffer, present the image it makes
       let submission = Submission {
-        command_buffers: &submission_command_buffers[i..=i],
-        wait_semaphores: vec![(&image_available_semaphores[current_frame], PipelineStage::COLOR_ATTACHMENT_OUTPUT)],
-        signal_semaphores: vec![&render_finished_semaphores[current_frame]],
+        command_buffers: &self.submission_command_buffers[i..=i],
+        wait_semaphores: vec![(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)],
+        signal_semaphores: vec![render_finished],
       };
-      command_queues[0].submit(submission, Some(&in_flight_fences[current_frame]));
-      swapchain
-        .present(&mut command_queues[0], image_index, vec![&render_finished_semaphores[current_frame]])
-        .expect("Couldn't present the image!");
+      self.command_queues[0].submit(submission, Some(fence));
+      self
+        .swapchain
+        .present(&mut self.command_queues[0], image_index, vec![render_finished])
+        .map_err(|_| "Couldn't present the image!")?;
+      self.current_frame = (self.current_frame + 1) % Self::MAX_FRAMES_IN_FLIGHT;
+      Ok(())
     }
-
-    current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
   }
-
-  // TODO: Theoretically one could do cleanup here.
 }
 
 #[derive(Debug)]
@@ -261,4 +313,61 @@ impl Default for WinitState {
   fn default() -> Self {
     Self::new(WINDOW_NAME, LogicalSize { width: 800.0, height: 600.0 }).expect("Could not create a window!")
   }
+}
+
+fn main() {
+  env_logger::init();
+
+  let mut winit_state = WinitState::default();
+
+  let mut hal_state = HalState::new(&winit_state.window);
+
+  let mut running = true;
+  let (mut frame_width, mut frame_height) = winit_state.window.get_inner_size().map(|logical| logical.into()).unwrap_or((0.0, 0.0));
+  let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
+
+  'while_running: while running {
+    winit_state.events_loop.poll_events(|event| match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => running = false,
+      Event::WindowEvent {
+        event: WindowEvent::Resized(logical),
+        ..
+      } => {
+        frame_width = logical.width;
+        frame_height = logical.height;
+      }
+      Event::WindowEvent {
+        event: WindowEvent::CursorMoved { position, .. },
+        ..
+      } => {
+        mouse_x = position.x;
+        mouse_y = position.y;
+      }
+      _ => (),
+    });
+    if !running {
+      // If the user requests a close we try to slow down gracefully, if we can.
+      if let Err(e) = hal_state.wait_until_idle() {
+        error!("Error while waiting for the queues to idle: {}", e);
+      }
+      break 'while_running;
+    }
+
+    // This makes a color that changes as the mouse moves, just so that there's
+    // some feedback that we're really drawing a new thing each frame.
+    let r = (mouse_x / frame_width) as f32;
+    let g = (mouse_y / frame_height) as f32;
+    let b = (r + g) * 0.3;
+    let a = 1.0;
+
+    if let Err(e) = hal_state.draw_clear_frame([r, g, b, a]) {
+      error!("Error while drawing a clear frame: {}", e);
+      break 'while_running;
+    }
+  }
+
+  // TODO: Theoretically one could do cleanup here? We should probably
 }
