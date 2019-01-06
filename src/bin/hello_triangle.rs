@@ -1,3 +1,6 @@
+#![allow(clippy::single_match)]
+#![allow(clippy::len_zero)]
+
 #[cfg(feature = "dx12")]
 extern crate gfx_backend_dx12 as back;
 #[cfg(feature = "metal")]
@@ -7,6 +10,7 @@ extern crate gfx_backend_vulkan as back;
 
 use gfx_hal::{
   adapter::PhysicalDevice,
+  command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
   image::{Extent, Layout, SubresourceRange, ViewKind},
@@ -14,11 +18,11 @@ use gfx_hal::{
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
     BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc, DepthTest, DescriptorSetLayoutBinding,
-    EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet, InputAssemblerDesc, LogicOp, PipelineCreationFlags, PolygonMode,
-    Rasterizer, Rect, ShaderStageFlags, Specialization, StencilTest, Viewport,
+    EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet, InputAssemblerDesc, LogicOp, PipelineCreationFlags, PipelineStage,
+    PolygonMode, Rasterizer, Rect, ShaderStageFlags, Specialization, StencilTest, Viewport,
   },
-  queue::capability::Capability,
-  window::{Backbuffer, Extent2D, SwapchainConfig},
+  queue::{capability::Capability, Submission},
+  window::{Backbuffer, Extent2D, FrameSync, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, Primitive, QueueFamily, Surface,
 };
 use glsl_to_spirv::ShaderType;
@@ -26,6 +30,7 @@ use std::{io::Read, ops::Range};
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 pub const WINDOW_NAME: &str = "Hello Triangle";
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
 fn main() {
   env_logger::init();
@@ -37,15 +42,13 @@ fn main() {
   let adapter = instance
     .enumerate_adapters()
     .into_iter()
-    .filter(|a| {
+    .find(|a| {
       a.queue_families
         .iter()
-        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
-        .is_some()
+        .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
     })
-    .next()
     .expect("Couldn't find a graphical Adapter!");
-  let (device, command_queues, queue_type, qf_id) = {
+  let (device, mut command_queues, queue_type, qf_id) = {
     let queue_family = adapter
       .queue_families
       .iter()
@@ -64,18 +67,22 @@ fn main() {
     (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
   };
   // DESCRIBE
-  let (swapchain, extent, backbuffer, format) = {
+  let (mut swapchain, extent, backbuffer, format) = {
     let (caps, formats, _present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
     let format = formats.map_or(Format::Rgba8Srgb, |formats| {
       formats
         .iter()
         .find(|format| format.base_format().1 == ChannelType::Srgb)
-        .map(|format| *format)
-        .unwrap_or(formats[0])
+        .cloned()
+        .unwrap_or(*formats.get(0).expect("Empty formats list specified!"))
     });
     let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end);
     let extent = swap_config.extent;
-    let (swapchain, backbuffer) = unsafe { device.create_swapchain(&mut surface, swap_config, None).unwrap() };
+    let (swapchain, backbuffer) = unsafe {
+      device
+        .create_swapchain(&mut surface, swap_config, None)
+        .expect("Failed to create the swapchain!")
+    };
     (swapchain, extent, backbuffer, format)
   };
   // DESCRIBE
@@ -129,7 +136,7 @@ fn main() {
     }
   };
   // DESCRIBE
-  let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) = create_graphics_pipeline(&device, extent, &render_pass);
+  let (_descriptor_set_layouts, _pipeline_layout, gfx_pipeline) = create_graphics_pipeline(&device, extent, &render_pass);
   // DESCRIBE
   let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
     frame_images
@@ -159,6 +166,47 @@ fn main() {
     assert!(Graphics::supported_by(queue_type));
     unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
   };
+  // DESCRIBE
+  let submission_command_buffers: Vec<_> = unsafe {
+    swapchain_framebuffers
+      .iter()
+      .map(|fb| {
+        let mut command_buffer: CommandBuffer<back::Backend, Graphics, MultiShot, Primary> = command_pool.acquire_command_buffer();
+        command_buffer.begin(true);
+        command_buffer.bind_graphics_pipeline(&gfx_pipeline);
+        // use an inner scope to avoid lifetime issues
+        {
+          let render_area = Rect {
+            x: 0,
+            y: 0,
+            w: extent.width as i16,
+            h: extent.height as i16,
+          };
+          let clear_values = vec![ClearValue::Color(ClearColor::Float([0.0, 0.0, 0.0, 1.0]))];
+          let mut render_pass_inline_encoder = command_buffer.begin_render_pass_inline(&render_pass, fb, render_area, clear_values.iter());
+          render_pass_inline_encoder.draw(0..3, 0..1);
+        }
+        command_buffer.finish();
+        command_buffer
+      })
+      .collect()
+  };
+  // DESCRIBE
+  let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
+    let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+    let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+    let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
+    for _ in 0..MAX_FRAMES_IN_FLIGHT {
+      image_available_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
+      render_finished_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
+      in_flight_fences.push(device.create_fence(true).expect("Could not create a fence!"));
+    }
+    (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+  };
+
+  //
+
+  let mut current_frame = 0;
 
   let mut running = true;
   while running {
@@ -169,15 +217,36 @@ fn main() {
       } => running = false,
       _ => (),
     });
+    if !running {
+      device.wait_idle().expect("Queues aren't going to idle!");
+      break;
+    }
+
+    // Draw a frame
+    unsafe {
+      device
+        .wait_for_fence(&in_flight_fences[current_frame], std::u64::MAX)
+        .expect("Failed to wait on the fence!");
+      device.reset_fence(&in_flight_fences[current_frame]).expect("Couldn't reset the fence!");
+      let image_index = swapchain
+        .acquire_image(std::u64::MAX, FrameSync::Semaphore(&image_available_semaphores[current_frame]))
+        .expect("Couldn't acquire an image from the swapchain!");
+      let i = image_index as usize;
+      let submission = Submission {
+        command_buffers: &submission_command_buffers[i..=i],
+        wait_semaphores: vec![(&image_available_semaphores[current_frame], PipelineStage::COLOR_ATTACHMENT_OUTPUT)],
+        signal_semaphores: vec![&render_finished_semaphores[current_frame]],
+      };
+      command_queues[0].submit(submission, Some(&in_flight_fences[current_frame]));
+      swapchain
+        .present(&mut command_queues[0], image_index, vec![&render_finished_semaphores[current_frame]])
+        .expect("Couldn't present the image!");
+    }
+
+    current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
   }
 
-  // CLEANUP
-  unsafe {
-    for (_, image_view) in frame_images.into_iter() {
-      device.destroy_image_view(image_view);
-    }
-    device.destroy_swapchain(swapchain);
-  };
+  // TODO: Theoretically one could do cleanup here.
 }
 
 #[derive(Debug)]
@@ -216,12 +285,12 @@ pub fn create_graphics_pipeline(
   let vertex_shader_code = glsl_to_spirv::compile(include_str!("hello_triangle.vert"), ShaderType::Vertex)
     .expect("Error compiling the vertex shader!")
     .bytes()
-    .map(Result::unwrap)
+    .map(|b| b.expect("Couldn't read the vertex shader bytes!"))
     .collect::<Vec<u8>>();
   let fragment_shader_code = glsl_to_spirv::compile(include_str!("hello_triangle.frag"), ShaderType::Fragment)
     .expect("Error compiling the fragment shader!")
     .bytes()
-    .map(Result::unwrap)
+    .map(|b| b.expect("Couldn't read the fragment shader bytes!"))
     .collect::<Vec<u8>>();
 
   let vertex_shader_module = unsafe {
@@ -309,9 +378,17 @@ pub fn create_graphics_pipeline(
     };
     let bindings: Vec<DescriptorSetLayoutBinding> = vec![];
     let immutable_samplers: Vec<<back::Backend as Backend>::Sampler> = vec![];
-    let ds_layouts = unsafe { vec![device.create_descriptor_set_layout(bindings, immutable_samplers).unwrap()] };
+    let ds_layouts = unsafe {
+      vec![device
+        .create_descriptor_set_layout(bindings, immutable_samplers)
+        .expect("Couldn't create a descriptor set layout!")]
+    };
     let push_constants: Vec<(ShaderStageFlags, Range<u32>)> = vec![];
-    let pipeline_layout = unsafe { device.create_pipeline_layout(&ds_layouts, push_constants).unwrap() };
+    let pipeline_layout = unsafe {
+      device
+        .create_pipeline_layout(&ds_layouts, push_constants)
+        .expect("Couldn't create a pipeline layout!")
+    };
     let subpass = Subpass {
       index: 0,
       main_pass: render_pass,
