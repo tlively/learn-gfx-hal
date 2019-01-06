@@ -1,3 +1,5 @@
+#![allow(clippy::single_match)]
+
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 pub const WINDOW_NAME: &str = "Hello Winit";
