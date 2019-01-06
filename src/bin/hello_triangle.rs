@@ -282,12 +282,12 @@ pub fn create_graphics_pipeline(
   <back::Backend as Backend>::PipelineLayout,
   <back::Backend as Backend>::GraphicsPipeline,
 ) {
-  let vertex_shader_code = glsl_to_spirv::compile(include_str!("hello_triangle.vert"), ShaderType::Vertex)
+  let vertex_shader_code = glsl_to_spirv::compile(VERT_SOURCE, ShaderType::Vertex)
     .expect("Error compiling the vertex shader!")
     .bytes()
     .map(|b| b.expect("Couldn't read the vertex shader bytes!"))
     .collect::<Vec<u8>>();
-  let fragment_shader_code = glsl_to_spirv::compile(include_str!("hello_triangle.frag"), ShaderType::Fragment)
+  let fragment_shader_code = glsl_to_spirv::compile(FRAG_SOURCE, ShaderType::Fragment)
     .expect("Error compiling the fragment shader!")
     .bytes()
     .map(|b| b.expect("Couldn't read the fragment shader bytes!"))
@@ -427,3 +427,42 @@ pub fn create_graphics_pipeline(
 
   (ds_layouts, pipeline_layout, gfx_pipeline)
 }
+
+const FRAG_SOURCE: &str = "#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+layout(location = 0) in vec3 fragColor;
+
+layout(location = 0) out vec4 outColor;
+
+void main() {
+  outColor = vec4(fragColor, 1.0);
+}
+";
+
+const VERT_SOURCE: &str = "#version 450
+#extension GL_ARB_separate_shader_objects : enable
+
+out gl_PerVertex {
+  vec4 gl_Position;
+};
+
+layout(location = 0) out vec3 fragColor;
+
+vec2 positions[3] = vec2[](
+  vec2(0.0, -0.5),
+  vec2(0.5, 0.5),
+  vec2(-0.5, 0.5)
+);
+
+vec3 colors[3] = vec3[](
+  vec3(1.0, 0.0, 0.0),
+  vec3(0.0, 1.0, 0.0),
+  vec3(0.0, 0.0, 1.0)
+);
+
+void main() {
+  gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
+  fragColor = colors[gl_VertexIndex];
+}
+";

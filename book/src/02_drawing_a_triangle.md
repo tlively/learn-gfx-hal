@@ -132,6 +132,8 @@ fn main() {
 
 And we'll see anything that someone wanted to log.
 
+# TODO: kill all the stuff past here
+
 ## Create an Instance
 
 With our dependencies all set, the very first thing we do is create an
