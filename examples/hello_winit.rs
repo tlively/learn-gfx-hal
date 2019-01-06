@@ -4,20 +4,6 @@ use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBu
 
 pub const WINDOW_NAME: &str = "Hello Winit";
 
-fn main() {
-  let mut winit_state = WinitState::default();
-  let mut running = true;
-  while running {
-    winit_state.events_loop.poll_events(|event| match event {
-      Event::WindowEvent {
-        event: WindowEvent::CloseRequested,
-        ..
-      } => running = false,
-      _ => (),
-    });
-  }
-}
-
 #[derive(Debug)]
 pub struct WinitState {
   pub events_loop: EventsLoop,
@@ -41,5 +27,19 @@ impl Default for WinitState {
   /// If a `CreationError` occurs.
   fn default() -> Self {
     Self::new(WINDOW_NAME, LogicalSize { width: 800.0, height: 600.0 }).expect("Could not create a window!")
+  }
+}
+
+fn main() {
+  let mut winit_state = WinitState::default();
+  let mut running = true;
+  while running {
+    winit_state.events_loop.poll_events(|event| match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => running = false,
+      _ => (),
+    });
   }
 }
