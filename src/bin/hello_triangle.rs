@@ -182,7 +182,7 @@ fn main() {
             w: extent.width as i16,
             h: extent.height as i16,
           };
-          let clear_values = vec![ClearValue::Color(ClearColor::Float([0.0, 0.0, 0.0, 1.0]))];
+          let clear_values = [ClearValue::Color(ClearColor::Float([0.0, 0.0, 0.0, 1.0]))];
           let mut render_pass_inline_encoder = command_buffer.begin_render_pass_inline(&render_pass, fb, render_area, clear_values.iter());
           render_pass_inline_encoder.draw(0..3, 0..1);
         }
