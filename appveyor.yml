@@ -1,3 +1,7 @@
+cache:
+  - C:\projects\learn-gfx-hal\target\debug\deps -> appveyor.yml
+  - C:\projects\learn-gfx-hal\target\release\deps -> appveyor.yml
+
 environment:
   matrix:
   - TARGET: 1.31.0-x86_64-pc-windows-msvc

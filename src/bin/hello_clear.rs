@@ -1,6 +1,5 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::len_zero)]
-//#![allow(unused)]
 
 #[cfg(feature = "dx12")]
 extern crate gfx_backend_dx12 as back;
