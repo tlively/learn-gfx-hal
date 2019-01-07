@@ -10,6 +10,49 @@
 
 # TODO: cut out as much vec as we can
 
+## Create An Instance
+
+The very first thing we do in our `HalState::new` method is create an
+[Instance](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html). This does
+whatever minimal things are required to activate your selected backend API. It's
+quite simple. Every backend provides a _type_ called `Instance` that also
+implements the `Instance` _trait_. The types, by convention, have a method
+called `create` which you pass a `&str` (the name for your instance) and `u32`
+(the version for your instance). Don't forget that `create` isn't part of the
+Instance trait, it's just a convention for now. In future versions of `gfx-hal`
+it might become more formalized.
+
+```rust
+pub struct HalState {
+  instance: back::Instance,
+}
+impl HalState {
+  pub fn new() -> Self {
+    let instance = back::Instance::create(WINDOW_NAME, 1);
+
+    Self { instance }
+  }
+}
+```
+
+As you can see, we add a field in the struct definition, and then in `new` we
+create that value. At the end of `new` we pack up all the stuff we've created.
+Right now it's just one thing but we'll have about 20 things by the end of this.
+After this first one I won't show the whole struct and new method each time,
+we'll just follow the same pattern over and over:
+
+* Add a field to the struct
+* Generate a value of that type
+* Put that value into the struct we return at the bottom of `new`
+
+This pattern is really obvious, but it'll get us pretty far.
+
+Unfortunately, we can no longer `derive(Debug)` on our struct, since the
+`Instance` type doesn't have `Debug`. That's a little sad, but we'll live
+through it.
+
+
+
 ## Create a Surface
 
 Once our Instance is started, we want to make a

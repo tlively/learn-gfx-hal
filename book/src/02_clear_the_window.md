@@ -28,6 +28,125 @@ enough code to make it refresh itself to a designated clear color that we
 specify. That's a good halfway point between where we are and where we're trying
 to get to farther on.
 
+## Be Clear About Our Goal
+
+[Always write the usage code first.](https://caseymuratori.com/blog_0024) Always.
+
+Before we do anything new we're going to just write an outline for how we think
+our code _should_ work. We don't know the limits of our tools right now, but that
+actually doesn't matter too much. If we need to change, we can change later.
+
+We want to start with an idea that's _easy to call_, because in the long term
+we'll be calling any bit of code a lot more than we'll be writing it.
+
+We already wrapped up the `winit` stuff into a state blob, so we'll assume that
+soon enough we'll also want to wrap `gfx-hal` into a state blob. Also, let's
+just assume that having a logging system active is a good idea ahead of time.
+There's already been a local variable apart from our two main state blobs, and
+there might be more. If we have enough local vars that aren't part of `winit` or
+`gfx-hal` then that will eventually become a state blob too.
+
+Once everything is in place, we go to a primary loop:
+
+1) Gathers user input for this frame
+2) Processes the effects of the input
+3) Draws the new frame
+4) Waits for Vertical Sync before looping
+
+Once the main loop ends for whatever reason we can try to shut down things as
+gracefully as possible. Actually, it's in some sense pointless to do shutdown
+code, since the OS will clean up any resources for you when the process exits.
+However, it's important to know how to do the shut down in case a scenario comes
+up where you want to close down `gfx-hal` entirely without leaving the process.
+Maybe you want to re-initialize on another GPU or something like that. We want
+to go over the how at least once, even if we let the OS do all the cleanup for
+us in future lessons.
+
+Everything so far sounds simple enough, let's look at that in code form:
+
+```rust
+fn main() {
+  // START LOGGING
+  // ???
+
+  // START WINIT
+  let mut winit_state = WinitState::default();
+
+  // START GFX HAL
+  let mut hal_state = HalState::new(???);
+
+  // CREATE LOCAL VARIABLES
+  let mut running = true;
+  // ???
+
+  'main_loop: loop {
+    winit_state.events_loop.poll_events(|event| match event {
+      // HANDLE EVENTS HERE
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => running = false,
+      // ???
+    });
+    if !running {
+      break 'main_loop;
+    }
+
+    // PROCESS THE EVENT CHANGES
+    // ???
+
+    // DRAW THE FRAME
+    if let Err(e) = hal_state.draw_clear_frame(color) {
+      error!("Error while drawing a clear frame: {}", e);
+      break 'main_loop;
+    }
+  }
+
+  // SHUT DOWN AS GRACEFULLY AS WE CAN
+  if let Err(e) = hal_state.shutdown_gracefully() {
+    error!("Error while shutting down: {}", e);
+  }
+}
+```
+
+## Allow For Logging
+
+In Rust you use the [log](https://docs.rs/log) crate as the generic logging
+facade. It provides macros for each log level and you call them just like you'd
+call `println!`. Then a particular logging backend (some other crate) picks up
+those logging calls and does the actual logging into a file or over the network
+or however. The simplest logging backend to use is probably
+[env_logger](https://docs.rs/env_logger) since it just spits things to `stdout`
+and `stderr` instead of needing to setup log files. That's fine for a tutorial,
+so we'll do that. We just add a bit more to our `Cargo.toml`:
+
+```toml
+[dependencies]
+log = "0.4.0"
+env_logger = "0.5.12"
+winit = "0.18"
+```
+
+And then we turn on the `env_logger` in main before we do anything else:
+
+```rust
+fn main() {
+  env_logger::init();
+  // ...
+```
+
+And we'll see anything that someone wanted to log. If we want to do our own
+logging that's easy too:
+
+```rust
+#[macro_use]
+extern crate log;
+```
+
+We could import each macro individually with a `use` statement, but
+`#[macro_use]` just grabs out all the macros from the `log` crate without any
+extra fuss. That's all we need to emit basic logging messages.
+
 ## Adding In `gfx-hal` And A Backend
 
 First, we have to add the `gfx-hal` crate to our `Cargo.toml` file. We also need
@@ -47,6 +166,8 @@ dx12 = ["gfx-backend-dx12"]
 vulkan = ["gfx-backend-vulkan"]
 
 [dependencies]
+log = "0.4.0"
+env_logger = "0.5.12"
 winit = "0.18"
 gfx-hal = "0.1"
 
@@ -113,56 +234,12 @@ that we haven't considered:
   different control flow, so it's hard to come up with a unified API. Work is
   being done, and hopefully soon I'll be able to recommend the GL backend.
 
-## Allow For Logging
-
-Since we're already mucking about with extra dependencies and stuff we'll also
-take the time to add logging ability to our program.
-
-In Rust you use the [log](https://docs.rs/log) crate as the generic logging
-facade. It provides macros for each log level and you call them just like you'd
-call `println!`. Then a particular logging backend (some other crate) picks up
-those logging calls and does the actual logging into a file or over the network
-or however. The simplest logging backend to use is probably
-[env_logger](https://docs.rs/env_logger) since it just spits things to `stdout`
-and `stderr` instead of needing to setup log files. That's fine for a tutorial,
-so we'll do that. We just add a bit more to our `Cargo.toml`:
-
-```toml
-[dependencies]
-log = "0.4.0"
-env_logger = "0.5.12"
-winit = "0.18"
-gfx-hal = "0.1"
-```
-
-And then we turn on the `env_logger` in main before we do anything else:
-
-```rust
-fn main() {
-  env_logger::init();
-  // ...
-```
-
-And we'll see anything that someone wanted to log. If we want to do our own
-logging that's easy too:
-
-```rust
-#[macro_use]
-extern crate log;
-```
-
-Again, we could set it up with `use` statements, but `#[macro_use]` just grabs
-out all the macros from the `log` crate without any extra fuss. That's all we
-need to emit basic logging messages.
-
 ## Create A HalState Struct
 
 Okay, okay, we've got all out initial dependencies in place, time to get back to
-code. What do we do first?
+code.
 
-Well, the `winit` crate gave us just two things to keep together and that
-already called for a struct to help organization. Spoilers: `gfx-hal` is gonna
-give us _way_ more than two things to keep track of.
+First we declare that struct that's going to hold all of our `gfx-hal` state.
 
 ```rust
 #[derive(Debug)]
@@ -172,7 +249,7 @@ pub struct HalState {
 ```
 
 We definitely want to have a construction method that will hide away _as much_ of
-the initialization as we can.
+the initialization as we can, because there's going to be piles of it.
 
 ```rust
 impl HalState {
@@ -182,44 +259,7 @@ impl HalState {
 }
 ```
 
-## Create An Instance
-
-The very first thing we do in our `HalState::new` method is create an
-[Instance](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html). This does
-whatever minimal things are required to activate your selected backend API. It's
-quite simple. Every backend provides a _type_ called `Instance` that also
-implements the `Instance` _trait_. The types, by convention, have a method
-called `create` which you pass a `&str` (the name for your instance) and `u32`
-(the version for your instance). Don't forget that `create` isn't part of the
-Instance trait, it's just a convention for now. In future versions of `gfx-hal`
-it might become more formalized.
-
-```rust
-pub struct HalState {
-  instance: back::Instance,
-}
-impl HalState {
-  pub fn new() -> Self {
-    let instance = back::Instance::create(WINDOW_NAME, 1);
-
-    Self { instance }
-  }
-}
-```
-
-As you can see, we add a field in the struct definition, and then in `new` we
-create that value. At the end of `new` we pack up all the stuff we've created.
-Right now it's just one thing but we'll have about 20 things by the end of this.
-After this first one I won't show the whole struct and new method each time,
-we'll just follow the same pattern over and over:
-
-* Add a field to the struct
-* Generate a value of that type
-* Put that value into the struct we return at the bottom of `new`
-
-This pattern is really obvious, but it'll get us pretty far.
-
-Unfortunately, we can no longer `derive(Debug)` on our struct, since the
-`Instance` type doesn't have `Debug`. That's a little sad, but we'll live
-through it.
-
+## TODO
+---
+---
+Figure out how to 

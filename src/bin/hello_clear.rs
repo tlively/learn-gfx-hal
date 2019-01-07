@@ -325,7 +325,7 @@ fn main() {
   let (mut frame_width, mut frame_height) = winit_state.window.get_inner_size().map(|logical| logical.into()).unwrap_or((0.0, 0.0));
   let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
 
-  'while_running: while running {
+  'main_loop: loop {
     winit_state.events_loop.poll_events(|event| match event {
       Event::WindowEvent {
         event: WindowEvent::CloseRequested,
@@ -348,11 +348,7 @@ fn main() {
       _ => (),
     });
     if !running {
-      // If the user requests a close we try to slow down gracefully, if we can.
-      if let Err(e) = hal_state.wait_until_idle() {
-        error!("Error while waiting for the queues to idle: {}", e);
-      }
-      break 'while_running;
+      break 'main_loop;
     }
 
     // This makes a color that changes as the mouse moves, just so that there's
@@ -364,9 +360,14 @@ fn main() {
 
     if let Err(e) = hal_state.draw_clear_frame([r, g, b, a]) {
       error!("Error while drawing a clear frame: {}", e);
-      break 'while_running;
+      break 'main_loop;
     }
   }
 
-  // TODO: Theoretically one could do cleanup here? We should probably
+  // If we leave the main loop for any reason, .
+  if let Err(e) = hal_state.wait_until_idle() {
+    error!("Error while waiting for the queues to idle: {}", e);
+  }
 }
+
+// TODO: Theoretically one could do cleanup here? We should probably
