@@ -21,7 +21,7 @@ use gfx_hal::{
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{PipelineStage, Rect},
   queue::{capability::Capability, CommandQueue, Submission},
-  window::{Backbuffer, Extent2D, FrameSync, Swapchain, SwapchainConfig},
+  window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
@@ -33,11 +33,13 @@ pub struct HalState {
   _surface: <back::Backend as Backend>::Surface,
   _adapter: Adapter<back::Backend>,
   device: back::Device,
-  command_queues: Vec<CommandQueue<back::Backend, Graphics>>,
   swapchain: <back::Backend as Backend>::Swapchain,
+  command_queues: Vec<CommandQueue<back::Backend, Graphics>>,
   extent: Extent2D,
   render_pass: <back::Backend as Backend>::RenderPass,
+  image_views: Vec<(<back::Backend as Backend>::ImageView)>,
   swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
+  command_pool: Option<CommandPool<back::Backend, Graphics>>,
   submission_command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
   image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
   render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
@@ -45,7 +47,7 @@ pub struct HalState {
   current_frame: usize,
 }
 impl HalState {
-  const MAX_FRAMES_IN_FLIGHT: usize = 2;
+  const MAX_FRAMES_IN_FLIGHT: usize = 3;
 
   pub fn new(window: &Window) -> Self {
     // Create An Instance
@@ -87,15 +89,26 @@ impl HalState {
 
     // Create A Swapchain
     let (swapchain, extent, backbuffer, format) = {
-      let (caps, formats, _present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
-      let format = formats.map_or(Format::Rgba8Srgb, |formats| {
+      let (caps, opt_formats, present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let format = opt_formats.map_or(Format::Rgba8Srgb, |formats| {
         formats
           .iter()
           .find(|format| format.base_format().1 == ChannelType::Srgb)
           .cloned()
-          .unwrap_or(*formats.get(0).expect("Empty formats list specified!"))
+          .unwrap_or(*formats.get(0).expect("Given an empty preferred format list!"))
       });
-      let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end);
+      let present_mode = if present_modes.contains(&PresentMode::Mailbox) {
+        PresentMode::Mailbox
+      } else if present_modes.contains(&PresentMode::Fifo) {
+        PresentMode::Fifo
+      } else if present_modes.contains(&PresentMode::Relaxed) {
+        PresentMode::Relaxed
+      } else if present_modes.contains(&PresentMode::Immediate) {
+        PresentMode::Immediate
+      } else {
+        panic!("Couldn't select a Swapchain presentation mode!")
+      };
+      let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
       let extent = swap_config.extent;
       let (swapchain, backbuffer) = unsafe {
         device
@@ -103,32 +116,6 @@ impl HalState {
           .expect("Failed to create the swapchain!")
       };
       (swapchain, extent, backbuffer, format)
-    };
-
-    // Create The FrameImages
-    let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
-      Backbuffer::Images(images) => images
-        .into_iter()
-        .map(|image| {
-          let image_view = unsafe {
-            device
-              .create_image_view(
-                &image,
-                ViewKind::D2,
-                format,
-                Swizzle::NO,
-                SubresourceRange {
-                  aspects: Aspects::COLOR,
-                  levels: 0..1,
-                  layers: 0..1,
-                },
-              )
-              .expect("Couldn't create the image_view for the image!")
-          };
-          (image, image_view)
-        })
-        .collect(),
-      Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
     };
 
     // Define A RenderPass
@@ -157,11 +144,34 @@ impl HalState {
       }
     };
 
+    // Create The ImageViews
+    let image_views: Vec<(<back::Backend as Backend>::ImageView)> = match backbuffer {
+      Backbuffer::Images(images) => images
+        .into_iter()
+        .map(|image| unsafe {
+          device
+            .create_image_view(
+              &image,
+              ViewKind::D2,
+              format,
+              Swizzle::NO,
+              SubresourceRange {
+                aspects: Aspects::COLOR,
+                levels: 0..1,
+                layers: 0..1,
+              },
+            )
+            .expect("Couldn't create the image_view for the image!")
+        })
+        .collect(),
+      Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
+    };
+
     // Create Our FrameBuffers
     let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-      frame_images
+      image_views
         .iter()
-        .map(|(_, image_view)| unsafe {
+        .map(|image_view| unsafe {
           device
             .create_framebuffer(
               &render_pass,
@@ -187,26 +197,7 @@ impl HalState {
     };
 
     // Create Our CommandBuffers
-    let submission_command_buffers: Vec<_> = unsafe {
-      swapchain_framebuffers
-        .iter()
-        .map(|fb| {
-          let mut command_buffer: CommandBuffer<back::Backend, Graphics, MultiShot, Primary> = command_pool.acquire_command_buffer();
-          command_buffer.begin(true);
-          let render_area = Rect {
-            x: 0,
-            y: 0,
-            w: extent.width as i16,
-            h: extent.height as i16,
-          };
-          let cornflower_blue = [0.259, 0.259, 0.435, 1.0];
-          let clear_values = [ClearValue::Color(ClearColor::Float(cornflower_blue))];
-          command_buffer.begin_render_pass_inline(&render_pass, fb, render_area, clear_values.iter());
-          command_buffer.finish();
-          command_buffer
-        })
-        .collect()
-    };
+    let submission_command_buffers: Vec<_> = swapchain_framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
     // Create Our Sync Primitives
     let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
@@ -230,7 +221,9 @@ impl HalState {
       swapchain,
       extent,
       render_pass,
+      image_views,
       swapchain_framebuffers,
+      command_pool: Some(command_pool),
       submission_command_buffers,
       image_available_semaphores,
       render_finished_semaphores,
@@ -295,6 +288,35 @@ impl HalState {
     }
   }
 }
+/*
+impl core::ops::Drop for HalState {
+  fn drop(&mut self) {
+    use core::mem::{replace, zeroed};
+    unsafe {
+      for fence in self.in_flight_fences.drain(..) {
+        self.device.destroy_fence(fence)
+      }
+      for semaphore in self.render_finished_semaphores.drain(..) {
+        self.device.destroy_semaphore(semaphore)
+      }
+      for semaphore in self.image_available_semaphores.drain(..) {
+        self.device.destroy_semaphore(semaphore)
+      }
+      self.command_pool.take().map(|command_pool| {
+        self.device.destroy_command_pool(command_pool.into_raw());
+      });
+      for framebuffer in self.swapchain_framebuffers.drain(..) {
+        self.device.destroy_framebuffer(framebuffer);
+      }
+      for image_view in self.image_views.drain(..) {
+        self.device.destroy_image_view(image_view);
+      }
+      self.device.destroy_render_pass(replace(&mut self.render_pass, zeroed()));
+      self.device.destroy_swapchain(replace(&mut self.swapchain, zeroed()));
+    }
+  }
+}
+*/
 
 #[derive(Debug)]
 pub struct WinitState {
@@ -372,7 +394,8 @@ fn main() {
     }
   }
 
-  // If we leave the main loop for any reason, .
+  // If we leave the main loop for any reason, we want to shut down as
+  // gracefully as we can.
   if let Err(e) = hal_state.wait_until_idle() {
     error!("Error while waiting for the queues to idle: {}", e);
   }
