@@ -49,10 +49,13 @@ impl HalState {
   const MAX_FRAMES_IN_FLIGHT: usize = 2;
 
   pub fn new(window: &Window) -> Self {
+    // Create An Instance
     let instance = back::Instance::create(WINDOW_NAME, 1);
-    // TODO
+
+    // Create A Surface
     let mut surface = instance.create_surface(window);
-    // TODO
+
+    // Select An Adapter
     let adapter = instance
       .enumerate_adapters()
       .into_iter()
@@ -62,7 +65,8 @@ impl HalState {
           .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
       })
       .expect("Couldn't find a graphical Adapter!");
-    // TODO
+
+    // Open A Device
     let (device, command_queues, queue_type, qf_id) = {
       let queue_family = adapter
         .queue_families
@@ -81,7 +85,8 @@ impl HalState {
       debug_assert!(queue_group.queues.len() > 0);
       (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
     };
-    // TODO
+
+    // Create A Swapchain
     let (swapchain, extent, backbuffer, format) = {
       let (caps, formats, _present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
       let format = formats.map_or(Format::Rgba8Srgb, |formats| {
@@ -100,7 +105,8 @@ impl HalState {
       };
       (swapchain, extent, backbuffer, format)
     };
-    // DESCRIBE
+    
+    // Create The FrameImages
     let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
       Backbuffer::Images(images) => images
         .into_iter()
@@ -125,7 +131,8 @@ impl HalState {
         .collect(),
       Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
     };
-    // DESCRIBE
+
+    // Define A RenderPass
     let render_pass = {
       let color_attachment = Attachment {
         format: Some(format),
@@ -150,7 +157,8 @@ impl HalState {
           .expect("Couldn't create a render pass!")
       }
     };
-    // DESCRIBE
+
+    // Create Our FrameBuffers
     let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
       frame_images
         .iter()
@@ -169,7 +177,8 @@ impl HalState {
         })
         .collect()
     };
-    // DESCRIBE
+
+    // Create Our CommandPool
     let mut command_pool = {
       let raw_command_pool = unsafe {
         device
@@ -179,7 +188,8 @@ impl HalState {
       assert!(Graphics::supported_by(queue_type));
       unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
     };
-    // DESCRIBE
+
+    // Create Our CommandBuffers
     let submission_command_buffers: Vec<_> = unsafe {
       swapchain_framebuffers
         .iter()
@@ -200,7 +210,8 @@ impl HalState {
         })
         .collect()
     };
-    // DESCRIBE
+
+    // Create Our Sync Primitives
     let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
       let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
       let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
