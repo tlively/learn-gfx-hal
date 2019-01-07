@@ -1,4 +1,3 @@
-#![allow(clippy::single_match)]
 #![allow(clippy::len_zero)]
 
 #[cfg(feature = "dx12")]
@@ -105,7 +104,7 @@ impl HalState {
       };
       (swapchain, extent, backbuffer, format)
     };
-    
+
     // Create The FrameImages
     let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
       Backbuffer::Images(images) => images
@@ -179,14 +178,12 @@ impl HalState {
     };
 
     // Create Our CommandPool
-    let mut command_pool = {
-      let raw_command_pool = unsafe {
-        device
-          .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
-          .expect("Could not create the raw command pool!")
-      };
+    let mut command_pool = unsafe {
+      let raw_command_pool = device
+        .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
+        .expect("Could not create the raw command pool!");
       assert!(Graphics::supported_by(queue_type));
-      unsafe { CommandPool::<back::Backend, Graphics>::new(raw_command_pool) }
+      CommandPool::<back::Backend, Graphics>::new(raw_command_pool)
     };
 
     // Create Our CommandBuffers
