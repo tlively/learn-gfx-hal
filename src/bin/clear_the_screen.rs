@@ -177,8 +177,8 @@ impl HalState {
               &render_pass,
               vec![image_view],
               Extent {
-                width: extent.width as _,
-                height: extent.height as _,
+                width: extent.width as u32,
+                height: extent.height as u32,
                 depth: 1,
               },
             )
@@ -232,13 +232,8 @@ impl HalState {
     }
   }
 
-  /// Waits until the device goes idle.
-  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
-    self.device.wait_idle()
-  }
-
   /// Draw a frame that's just cleared to the color specified.
-  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str> {
     unsafe {
       // give shorter names to the synchronizations for the current frame
       let fence = &self.in_flight_fences[self.current_frame];
@@ -287,11 +282,14 @@ impl HalState {
       Ok(())
     }
   }
+
+  /// Waits until the device goes idle.
+  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
+    self.device.wait_idle()
+  }
 }
-/*
 impl core::ops::Drop for HalState {
   fn drop(&mut self) {
-    use core::mem::{replace, zeroed};
     unsafe {
       for fence in self.in_flight_fences.drain(..) {
         self.device.destroy_fence(fence)
@@ -302,21 +300,22 @@ impl core::ops::Drop for HalState {
       for semaphore in self.image_available_semaphores.drain(..) {
         self.device.destroy_semaphore(semaphore)
       }
-      self.command_pool.take().map(|command_pool| {
-        self.device.destroy_command_pool(command_pool.into_raw());
-      });
-      for framebuffer in self.swapchain_framebuffers.drain(..) {
-        self.device.destroy_framebuffer(framebuffer);
-      }
       for image_view in self.image_views.drain(..) {
         self.device.destroy_image_view(image_view);
       }
+      for framebuffer in self.swapchain_framebuffers.drain(..) {
+        self.device.destroy_framebuffer(framebuffer);
+      }
+      self.command_pool.take().map(|command_pool| {
+        self.device.destroy_command_pool(command_pool.into_raw());
+      });
+      // BIG DANGER HERE, DO NOT DO THIS OUTSIDE OF A DROP
+      use core::mem::{replace, zeroed};
       self.device.destroy_render_pass(replace(&mut self.render_pass, zeroed()));
       self.device.destroy_swapchain(replace(&mut self.swapchain, zeroed()));
     }
   }
 }
-*/
 
 #[derive(Debug)]
 pub struct WinitState {
@@ -400,5 +399,3 @@ fn main() {
     error!("Error while waiting for the queues to idle: {}", e);
   }
 }
-
-// TODO: Theoretically one could do cleanup here? We should probably

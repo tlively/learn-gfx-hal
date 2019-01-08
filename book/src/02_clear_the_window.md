@@ -469,7 +469,9 @@ weird enough we'll throw a panic at that point.
 
 Finally, we also want to specify a
 [PresentMode](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/enum.PresentMode.html).
-This is how we get that magical vsync thing that we wanted. There's a list of possible modes that we get, and we want to pick the first one according to the following list of "best to worst":
+This is how we get that magical vsync thing that we wanted. There's a list of
+possible modes that we get, and we want to pick the first one according to the
+following list of "best to worst":
 
 * Mailbox: Always VSync, and if you have **3 or more images** it'll keep
   rendering frames _faster_ than 60fps. One will always be "the frame being
@@ -575,55 +577,56 @@ be sure that we'll get into more of this later.
     };
 ```
 
-## Create The Images
+## Create The ImageViews
 
-We also need to create some
-[Image](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Backend.html#associatedtype.Image)
-and
-[ImageView](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Backend.html#associatedtype.ImageView)
-pairs. These are defined by the backend, so no docs really.
+Next we're going to take the Image values that our Backbuffer has and make one
+ImageView each. This actually doesn't use anything from the `render_pass` step,
+not all of the steps have a strict dependency.
 
 ```rust
-    let frame_images: Vec<(<back::Backend as Backend>::Image, <back::Backend as Backend>::ImageView)> = match backbuffer {
+    let image_views: Vec<(<back::Backend as Backend>::ImageView)> = match backbuffer {
       Backbuffer::Images(images) => images
         .into_iter()
-        .map(|image| {
-          let image_view = unsafe {
-            device
-              .create_image_view(
-                &image,
-                ViewKind::D2,
-                format,
-                Swizzle::NO,
-                SubresourceRange {
-                  aspects: Aspects::COLOR,
-                  levels: 0..1,
-                  layers: 0..1,
-                },
-              )
-              .expect("Couldn't create the image_view for the image!")
-          };
-          (image, image_view)
+        .map(|image| unsafe {
+          device
+            .create_image_view(
+              &image,
+              ViewKind::D2,
+              format,
+              Swizzle::NO,
+              SubresourceRange {
+                aspects: Aspects::COLOR,
+                levels: 0..1,
+                layers: 0..1,
+              },
+            )
+            .expect("Couldn't create the image_view for the image!")
         })
         .collect(),
       Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
     };
 ```
 
+We won't be using the ImageViews _directly_, but we'll need them in the next
+step, and we'll also need to keep them around to manually clean up at the end.
+
 ## Create Our FrameBuffers
+
+Once our ImageView values are all set we'll use them to make our FrameBuffer
+values, which is what you _actually_ tell the GPU to draw with.
 
 ```rust
     let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-      frame_images
+      image_views
         .iter()
-        .map(|(_, image_view)| unsafe {
+        .map(|image_view| unsafe {
           device
             .create_framebuffer(
               &render_pass,
               vec![image_view],
               Extent {
-                width: extent.width as _,
-                height: extent.height as _,
+                width: extent.width as u32,
+                height: extent.height as u32,
                 depth: 1,
               },
             )
@@ -635,6 +638,16 @@ pairs. These are defined by the backend, so no docs really.
 
 ## Create Our CommandPool
 
+Next, we make a
+[CommandPool](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pool/struct.CommandPool.html).
+As with the framebuffer part of things, this doesn't strictly depend on the
+previous step. The idea here is that the GPU does _as little checking as
+possible_, so internally it's using a thing that `gfx-hal` calls a
+`RawCommandPool`. We want a little type safety on top, so we wrap that up in a
+CommandPool which carries some PhantomData about what types of commands are
+appropriate for that pool. Our Device gives us the RawCommandPool, we check that
+it supports Graphics like we want, and then we wrap it into a CommandPool.
+
 ```rust
     let mut command_pool = unsafe {
       let raw_command_pool = device
@@ -645,13 +658,46 @@ pairs. These are defined by the backend, so no docs really.
     };
 ```
 
+We need the CommandPool in the next step, but after that we don't use it
+directly, so we'll store it within HalState as an Option<CommandPool> value,
+because that makes the cleanup easier later on.
+
 ## Create Our CommandBuffers
+
+Once our CommandPool is ready, we can get some
+[CommandBuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/struct.CommandBuffer.html)
+values, which is what we _actually_ write out our drawing commands with. You
+write into a CommandBuffer and then "submit" the buffer to the GPU and it does
+the rest. Since we'll be doing the writing and submitting later on a frame by
+frame basis, we can just get some now without writing anything to them.
 
 ```rust
     let submission_command_buffers: Vec<_> = swapchain_framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 ```
 
 ## Create Our Sync Primitives
+
+I told you that the GPU avoids as many checks as possible by default, but that
+even includes memory synchronization checks. Instead, we have to make a pile of
+sync primitives and then use them by hand every frame.
+
+For now, we just make a pile of them, and they'll go into use once we start
+doing the drawing. We want to have one of each primitive per frame "in flight".
+This is related to that `PresentMode` concept above. For our example we want to
+have 3, so we'll define it as a const in the HalState struct.
+
+```rust
+impl HalState {
+  const MAX_FRAMES_IN_FLIGHT: usize = 3;
+}
+```
+
+In your own program you might want to have it depend on how much video memory is
+available or some other factor that you check for at runtime.
+
+The actual creation process is unexciting, we make semaphores for images being
+available, semaphores for rendering of images being finished, and fences for an
+image being in flight.
 
 ```rust
     let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
@@ -667,11 +713,78 @@ pairs. These are defined by the backend, so no docs really.
     };
 ```
 
+## Wrap Up HalState
+
+Now we're all done, except that we also want to add a `current_frame` value so
+that we know which of those sync primitive slots we're on within the vectors we
+just set up.
+
+The only thing left to do is return our new struct.
+
+```rust
+    Self {
+      _instance: instance,
+      _surface: surface,
+      _adapter: adapter,
+      device,
+      command_queues,
+      swapchain,
+      extent,
+      render_pass,
+      image_views,
+      swapchain_framebuffers,
+      command_pool: Some(command_pool),
+      submission_command_buffers,
+      image_available_semaphores,
+      render_finished_semaphores,
+      in_flight_fences,
+      current_frame: 0,
+    }
+```
+
 # Drawing A Clear Frame
 
-# Not Using Expect
+Now that we've got all of our HalState declared, let's make it able to draw a
+frame to a designated clear color.
+
+This whole method is just... just one big unsafe block. Or, well, we could make
+the method be unsafe, but basically we have to blindly mask away the unsafety at
+some point, so _oh well_.
+
+## Not Using Expect Anymore
+
+In some sense, it's _maybe_ okay for an example to have a bunch of uses of
+`expect` despite the fact that there might reasonably be errors. Don't get me
+wrong, you should always avoid a panic you don't need in your long term code,
+but since we don't really know what we're doing yet, and since we don't really
+know how to recover from problems yet, we've kinda got no choice except to
+panic.
+
+It's still not at all elegant.
+
+So, moving forward we'll avoid panics as much as we can. To start with instead
+of having some method on HalState like
+
+```rust
+pub fn draw_clear_frame(&mut self, color: [f32; 4])
+```
+
+We're going to make it be
+
+```rust
+pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str>
+```
+
+This is a little better. Not the best. In the long term we'd want to sort out
+all the possible error cases and classify them into a big enum or something.
+That'd be neat, and easy for the caller to match on when an error does happen.
+Except we don't really _know_ all possible errors yet, so we'll just start with
+string literals. Just to keep ourselves in the habit of returning a Result
+instead of triggering a panic.
 
 ## Select Our Sync Primitives
+
+First we'll get out the sync primitives for the frame count we're on.
 
 ```rust
       let fence = &self.in_flight_fences[self.current_frame];
@@ -680,6 +793,11 @@ pairs. These are defined by the backend, so no docs really.
 ```
 
 ## Select An Image
+
+Now we have to pick what image we're working on. We wait for the fence of this
+index so that we don't overwrite an image while it's actually in flight. Then we
+reset it, and try to acquire an image. The image isn't necessarily immediately
+ready, so we pass in a semaphore here that will be signalled in a moment.
 
 ```rust
       self
@@ -695,6 +813,13 @@ pairs. These are defined by the backend, so no docs really.
 ```
 
 ## Write The Command Buffer
+
+With an index in hand, we record a command buffer. We pick out the one for the
+index we got and tell it to clear the whole render area to the color that was
+given in the method argument. That's it, that's all we're gonna do.
+
+The whole thing goes inside an dummy scope so that the `&mut` on the submission
+command buffers goes away before the next step.
 
 ```rust
       {
@@ -714,6 +839,20 @@ pairs. These are defined by the backend, so no docs really.
 
 ## Submit The Buffer, Present The Image
 
+Once we've got our command buffer all written we have to submit it. Once it's
+been properly submitted, we have to "present" the image as a separate step. Of
+course the submission might be finished recording before the image we're doing
+it for is ready, and we might try to present it before the commands have
+actually been completed. This is where all those sync primitives play their
+part.
+
+One the call to present returns we do the equivalent of something like
+`self.current_frame += 1`, except that we need it to also roll around when we
+hit our MAX_FRAMES_IN_FLIGHT value, so there's a mod too. Divisions are slow and
+all, but we can pretty much trust the compiler to turn this mod into a mul and
+shift operation, since it's mod by a constant
+([godbolt](https://rust.godbolt.org/z/Drwbg0)).
+
 ```rust
       let submission = Submission {
         command_buffers: &self.submission_command_buffers[i..=i],
@@ -729,6 +868,165 @@ pairs. These are defined by the backend, so no docs really.
       Ok(())
 ```
 
-# Wrapping It Up
+# Cleanup Code
 
-//.
+At the end of it all we want to clean up our stuff. Sadly, `gfx-hal` doesn't
+clean up much automatically.
+
+We just call `self.device.destroy_thing` for each thing that needs to be
+destroyed. That's not complicated. What makes it complex is that a few things
+are difficult to move out of a borrowed context.
+
+See, Drop is defined to have a method `drop` that takes `&mut self`, like this
+
+```rust
+impl core::ops::Drop for HalState {
+  fn drop(&mut self) {
+    // STUFF
+  }
+}
+```
+
+And then all the vectors we can drain out:
+
+```rust
+      for fence in self.in_flight_fences.drain(..) {
+        self.device.destroy_fence(fence)
+      }
+      for semaphore in self.render_finished_semaphores.drain(..) {
+        self.device.destroy_semaphore(semaphore)
+      }
+      for semaphore in self.image_available_semaphores.drain(..) {
+        self.device.destroy_semaphore(semaphore)
+      }
+      for image_view in self.image_views.drain(..) {
+        self.device.destroy_image_view(image_view);
+      }
+      for framebuffer in self.swapchain_framebuffers.drain(..) {
+        self.device.destroy_framebuffer(framebuffer);
+      }
+```
+
+And the CommandPool is in an Option, so we can use `take` and then `map` to cleanly handle that
+
+```rust
+      self.command_pool.take().map(|command_pool| {
+        self.device.destroy_command_pool(command_pool.into_raw());
+      });
+```
+
+But the RenderPass and the Swapchain... we want to destroy them, but we can't
+move them out of the borrowed context. And we want to not have them be wrapped
+in Option since we'll be using them every single frame and it'll be a lot of
+code noise to be dealing with that Option layer.
+
+So...
+
+We'll just do the _hyper unsafe_ thing, and use `replace`. What will go in the
+old position? Just a `zeroed` value. Is that legal? I really don't think so. But
+you can't witness the struct after it's been dropped so you can't actually use
+the zeroed data so... It's probably fine? We'll hope it's fine.
+
+```rust
+      // BIG DANGER HERE, DO NOT DO THIS OUTSIDE OF A DROP
+      use core::mem::{replace, zeroed};
+      self.device.destroy_render_pass(replace(&mut self.render_pass, zeroed()));
+      self.device.destroy_swapchain(replace(&mut self.swapchain, zeroed()));
+```
+
+And now our HalState works with Drop just like anything else.
+
+# Wrapping Up The Example
+
+We're almost home! I promise!
+
+## Picking A Clear Color
+
+To pick a color each frame, first we add a few variables to our pile of locals.
+
+```rust
+  let mut running = true;
+  let (mut frame_width, mut frame_height) = winit_state.window.get_inner_size().map(|logical| logical.into()).unwrap_or((0.0, 0.0));
+  let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
+```
+
+And we make the input gathering a little more interesting
+
+```rust
+  'main_loop: loop {
+    winit_state.events_loop.poll_events(|event| match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => running = false,
+      Event::WindowEvent {
+        event: WindowEvent::Resized(logical),
+        ..
+      } => {
+        frame_width = logical.width;
+        frame_height = logical.height;
+      }
+      Event::WindowEvent {
+        event: WindowEvent::CursorMoved { position, .. },
+        ..
+      } => {
+        mouse_x = position.x;
+        mouse_y = position.y;
+      }
+      _ => (),
+    });
+    if !running {
+      break 'main_loop;
+    }
+```
+
+And then with this data we do _some_ arbitrary thing to pick us a color each
+frame and call the method. We'll use the mouse's X and Y position to generate
+Red and Green channel values for our color.
+
+```rust
+    // This makes a color that changes as the mouse moves, just so that there's
+    // some feedback that we're really drawing a new thing each frame.
+    let r = (mouse_x / frame_width) as f32;
+    let g = (mouse_y / frame_height) as f32;
+    let b = (r + g) * 0.3;
+    let a = 1.0;
+
+    if let Err(e) = hal_state.draw_clear_frame([r, g, b, a]) {
+      error!("Error while drawing a clear frame: {}", e);
+      break 'main_loop;
+    }
+```
+
+## Closing Up Shop
+
+One thing is that before we let the HalState struct drop we have to try and wait
+for all active queues to finish out. Otherwise we'll get all sorts of bad use
+after free stuff.
+
+After whe loop we put
+
+```rust
+  // If we leave the main loop for any reason, we want to shut down as
+  // gracefully as we can.
+  if let Err(e) = hal_state.wait_until_idle() {
+    error!("Error while waiting for the queues to idle: {}", e);
+  }
+```
+
+And inside HalState we make a small helper:
+
+```rust
+  /// Waits until the device goes idle.
+  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
+    self.device.wait_idle()
+  }
+```
+
+And we're done.
+
+## Turn It On
+
+If you turn on the program you should get a black screen that shifts around with
+shades of green and magenta when you move the mouse around.
+
