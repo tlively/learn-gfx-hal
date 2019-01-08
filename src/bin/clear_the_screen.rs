@@ -344,7 +344,7 @@ impl Default for WinitState {
 }
 
 fn main() {
-  env_logger::init();
+  simple_logger::init().unwrap();
 
   let mut winit_state = WinitState::default();
 

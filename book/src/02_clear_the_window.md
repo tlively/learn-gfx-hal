@@ -116,22 +116,25 @@ facade. It provides macros for each log level and you call them just like you'd
 call `println!`. Then a particular logging backend (some other crate) picks up
 those logging calls and does the actual logging into a file or over the network
 or however. The simplest logging backend to use is probably
-[env_logger](https://docs.rs/env_logger) since it just spits things to `stdout`
-and `stderr` instead of needing to setup log files. That's fine for a tutorial,
-so we'll do that. We just add a bit more to our `Cargo.toml`:
+[simple_logger](https://crates.io/crates/simple_logger) since it just spits
+things to `stdout` and `stderr` instead of needing to setup log files. You also
+don't need to remember to configure log levels with environment variables or
+anything like that, which makes it easy to use for people who are forgetful or
+who are using the always anemic `cmd.exe` command prompt. That's just fine for a
+tutorial, so we'll do that. We just add a bit more to our `Cargo.toml`:
 
 ```toml
 [dependencies]
 log = "0.4.0"
-env_logger = "0.5.12"
+simple_logger = "1.0"
 winit = "0.18"
 ```
 
-And then we turn on the `env_logger` in main before we do anything else:
+And then we turn on the `simple_logger` in main before we do anything else:
 
 ```rust
 fn main() {
-  env_logger::init();
+  simple_logger::init().unwrap();
   // ...
 ```
 
