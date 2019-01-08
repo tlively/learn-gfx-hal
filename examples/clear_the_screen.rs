@@ -10,6 +10,7 @@ extern crate gfx_backend_vulkan as back;
 #[macro_use]
 extern crate log;
 
+use core::mem::ManuallyDrop;
 use gfx_hal::{
   adapter::{Adapter, PhysicalDevice},
   command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
@@ -33,10 +34,10 @@ pub struct HalState {
   _surface: <back::Backend as Backend>::Surface,
   _adapter: Adapter<back::Backend>,
   device: back::Device,
-  swapchain: <back::Backend as Backend>::Swapchain,
+  swapchain: ManuallyDrop<<back::Backend as Backend>::Swapchain>,
   queue_group: QueueGroup<back::Backend, Graphics>,
   extent: Extent2D,
-  render_pass: <back::Backend as Backend>::RenderPass,
+  render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
   image_views: Vec<(<back::Backend as Backend>::ImageView)>,
   swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
   command_pool: Option<CommandPool<back::Backend, Graphics>>,
@@ -220,9 +221,9 @@ impl HalState {
       _adapter: adapter,
       device,
       queue_group,
-      swapchain,
+      swapchain: ManuallyDrop::new(swapchain),
       extent,
-      render_pass,
+      render_pass: ManuallyDrop::new(render_pass),
       image_views,
       swapchain_framebuffers,
       command_pool: Some(command_pool),
@@ -308,18 +309,17 @@ impl core::ops::Drop for HalState {
       for framebuffer in self.swapchain_framebuffers.drain(..) {
         self.device.destroy_framebuffer(framebuffer);
       }
-      /*
-      for framebuffer in self.submission_command_buffers.drain(..) {
-        self.device.destroy_framebuffer(framebuffer);
-      }
-      */
       self.command_pool.take().map(|command_pool| {
         self.device.destroy_command_pool(command_pool.into_raw());
       });
-      // BIG DANGER HERE, DO NOT DO THIS OUTSIDE OF A DROP
-      use core::mem::{replace, zeroed};
-      self.device.destroy_render_pass(replace(&mut self.render_pass, zeroed()));
-      self.device.destroy_swapchain(replace(&mut self.swapchain, zeroed()));
+      /// LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
+      use core::ptr::read;
+      self
+        .device
+        .destroy_render_pass(ManuallyDrop::into_inner(read(&mut self.render_pass)));
+      self
+        .device
+        .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
     }
   }
 }
