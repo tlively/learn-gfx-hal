@@ -19,8 +19,8 @@ use gfx_hal::{
   image::{Extent, Layout, SubresourceRange, ViewKind},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
-  pso::{PipelineStage, Rect},
-  queue::{capability::Capability, CommandQueue, Submission},
+  pso::PipelineStage,
+  queue::{family::QueueGroup, Submission},
   window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
@@ -34,7 +34,7 @@ pub struct HalState {
   _adapter: Adapter<back::Backend>,
   device: back::Device,
   swapchain: <back::Backend as Backend>::Swapchain,
-  command_queues: Vec<CommandQueue<back::Backend, Graphics>>,
+  queue_group: QueueGroup<back::Backend, Graphics>,
   extent: Extent2D,
   render_pass: <back::Backend as Backend>::RenderPass,
   image_views: Vec<(<back::Backend as Backend>::ImageView)>,
@@ -63,16 +63,16 @@ impl HalState {
       .find(|a| {
         a.queue_families
           .iter()
-          .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+          .any(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
       })
       .expect("Couldn't find a graphical Adapter!");
 
     // Open A Device
-    let (device, command_queues, queue_type, qf_id) = {
+    let (device, queue_group) = {
       let queue_family = adapter
         .queue_families
         .iter()
-        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+        .find(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
         .expect("Couldn't find a QueueFamily with graphics!");
       let Gpu { device, mut queues } = unsafe {
         adapter
@@ -84,7 +84,7 @@ impl HalState {
         .take::<Graphics>(queue_family.id())
         .expect("Couldn't take ownership of the QueueGroup!");
       debug_assert!(queue_group.queues.len() > 0);
-      (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
+      (device, queue_group)
     };
 
     // Create A Swapchain
@@ -108,6 +108,7 @@ impl HalState {
       } else {
         panic!("Couldn't select a Swapchain presentation mode!")
       };
+      assert!(caps.image_count.end as usize > Self::MAX_FRAMES_IN_FLIGHT);
       let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
       let extent = swap_config.extent;
       let (swapchain, backbuffer) = unsafe {
@@ -145,7 +146,7 @@ impl HalState {
     };
 
     // Create The ImageViews
-    let image_views: Vec<(<back::Backend as Backend>::ImageView)> = match backbuffer {
+    let image_views: Vec<_> = match backbuffer {
       Backbuffer::Images(images) => images
         .into_iter()
         .map(|image| unsafe {
@@ -189,15 +190,16 @@ impl HalState {
 
     // Create Our CommandPool
     let mut command_pool = unsafe {
-      let raw_command_pool = device
-        .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
-        .expect("Could not create the raw command pool!");
-      assert!(Graphics::supported_by(queue_type));
-      CommandPool::<back::Backend, Graphics>::new(raw_command_pool)
+      device
+        .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty())
+        .expect("Could not create the raw command pool!")
     };
 
     // Create Our CommandBuffers
-    let submission_command_buffers: Vec<_> = swapchain_framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
+    let submission_command_buffers: Vec<_> = swapchain_framebuffers
+      .iter()
+      .map(|_| command_pool.acquire_command_buffer())
+      .collect();
 
     // Create Our Sync Primitives
     let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
@@ -217,7 +219,7 @@ impl HalState {
       _surface: surface,
       _adapter: adapter,
       device,
-      command_queues,
+      queue_group,
       swapchain,
       extent,
       render_pass,
@@ -255,15 +257,15 @@ impl HalState {
       // Fill up that command buffer with the instructions to clear the screen
       {
         let command_buffer = &mut self.submission_command_buffers[i];
-        command_buffer.begin(true);
-        let render_area = Rect {
-          x: 0,
-          y: 0,
-          w: self.extent.width as i16,
-          h: self.extent.height as i16,
-        };
+        command_buffer.begin(false);
+        let render_area = self.extent.to_extent().rect();
         let clear_values = [ClearValue::Color(ClearColor::Float(color))];
-        command_buffer.begin_render_pass_inline(&self.render_pass, &self.swapchain_framebuffers[i], render_area, clear_values.iter());
+        command_buffer.begin_render_pass_inline(
+          &self.render_pass,
+          &self.swapchain_framebuffers[i],
+          render_area,
+          clear_values.iter(),
+        );
         command_buffer.finish();
       }
 
@@ -273,10 +275,10 @@ impl HalState {
         wait_semaphores: vec![(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)],
         signal_semaphores: vec![render_finished],
       };
-      self.command_queues[0].submit(submission, Some(fence));
+      self.queue_group.queues[0].submit(submission, Some(fence));
       self
         .swapchain
-        .present(&mut self.command_queues[0], image_index, vec![render_finished])
+        .present(&mut self.queue_group.queues[0], image_index, vec![render_finished])
         .map_err(|_| "Couldn't present the image!")?;
       self.current_frame = (self.current_frame + 1) % Self::MAX_FRAMES_IN_FLIGHT;
       Ok(())
@@ -306,6 +308,11 @@ impl core::ops::Drop for HalState {
       for framebuffer in self.swapchain_framebuffers.drain(..) {
         self.device.destroy_framebuffer(framebuffer);
       }
+      /*
+      for framebuffer in self.submission_command_buffers.drain(..) {
+        self.device.destroy_framebuffer(framebuffer);
+      }
+      */
       self.command_pool.take().map(|command_pool| {
         self.device.destroy_command_pool(command_pool.into_raw());
       });
@@ -330,7 +337,10 @@ impl WinitState {
   /// It's possible for the window creation to fail. This is unlikely.
   pub fn new<T: Into<String>>(title: T, size: LogicalSize) -> Result<Self, CreationError> {
     let events_loop = EventsLoop::new();
-    let output = WindowBuilder::new().with_title(title).with_dimensions(size).build(&events_loop);
+    let output = WindowBuilder::new()
+      .with_title(title)
+      .with_dimensions(size)
+      .build(&events_loop);
     output.map(|window| Self { events_loop, window })
   }
 }
@@ -339,7 +349,14 @@ impl Default for WinitState {
   /// ## Panics
   /// If a `CreationError` occurs.
   fn default() -> Self {
-    Self::new(WINDOW_NAME, LogicalSize { width: 800.0, height: 600.0 }).expect("Could not create a window!")
+    Self::new(
+      WINDOW_NAME,
+      LogicalSize {
+        width: 800.0,
+        height: 600.0,
+      },
+    )
+    .expect("Could not create a window!")
   }
 }
 
@@ -351,7 +368,11 @@ fn main() {
   let mut hal_state = HalState::new(&winit_state.window);
 
   let mut running = true;
-  let (mut frame_width, mut frame_height) = winit_state.window.get_inner_size().map(|logical| logical.into()).unwrap_or((0.0, 0.0));
+  let (mut frame_width, mut frame_height) = winit_state
+    .window
+    .get_inner_size()
+    .map(|logical| logical.into())
+    .unwrap_or((0.0, 0.0));
   let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
 
   'main_loop: loop {
