@@ -1,1 +1,1 @@
-cargo build --features="dx12"
+cargo build --examples --features="dx12"

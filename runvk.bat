@@ -1,1 +1,1 @@
-cargo run --features="vulkan"
+cargo run --example clear_the_screen --features="vulkan"
