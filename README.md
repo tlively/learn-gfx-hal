@@ -15,8 +15,6 @@ This is _not_ a library crate for you to import into your own projects. It is a
 book and examples for you read and learn from.
 
 * Fully working examples are in the `examples/` directory.
-* Work in progress stuff is in the `src/` directory. RLS just behaves better
-  that way.
 * The rendered version of the book text is on the [GitHub Pages
   site](https://gfx-rs.github.io/learn-gfx-hal/).
 
