@@ -855,7 +855,7 @@ it for is ready, and we might try to present it before the commands have
 actually been completed. This is where all those sync primitives play their
 part.
 
-One the call to present returns we do the equivalent of something like
+Once the call to present returns we do the equivalent of something like
 `self.current_frame += 1`, except that we need it to also roll around when we
 hit our MAX_FRAMES_IN_FLIGHT value, so there's a mod too. Divisions are slow and
 all, but we can pretty much trust the compiler to turn this mod into a mul and
