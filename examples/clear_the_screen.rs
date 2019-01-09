@@ -30,21 +30,22 @@ use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBu
 pub const WINDOW_NAME: &str = "Hello Clear";
 
 pub struct HalState {
-  _instance: ManuallyDrop<back::Instance>,
-  _surface: <back::Backend as Backend>::Surface,
-  _adapter: Adapter<back::Backend>,
-  device: back::Device,
-  swapchain: ManuallyDrop<<back::Backend as Backend>::Swapchain>,
-  queue_group: QueueGroup<back::Backend, Graphics>,
-  extent: Extent2D,
-  render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
-  image_views: Vec<(<back::Backend as Backend>::ImageView)>,
-  swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
-  command_pool: Option<CommandPool<back::Backend, Graphics>>,
-  submission_command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
-  image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
-  render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
   in_flight_fences: Vec<<back::Backend as Backend>::Fence>,
+  render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  submission_command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
+  command_pool: Option<CommandPool<back::Backend, Graphics>>,
+  swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
+  image_views: Vec<(<back::Backend as Backend>::ImageView)>,
+  render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
+  extent: Extent2D,
+  queue_group: QueueGroup<back::Backend, Graphics>,
+  swapchain: ManuallyDrop<<back::Backend as Backend>::Swapchain>,
+  device: ManuallyDrop<back::Device>,
+  _adapter: Adapter<back::Backend>,
+  _surface: <back::Backend as Backend>::Surface,
+  _instance: ManuallyDrop<back::Instance>,
+  //
   current_frame: usize,
 }
 impl HalState {
@@ -221,7 +222,7 @@ impl HalState {
       _instance: ManuallyDrop::new(instance),
       _surface: surface,
       _adapter: adapter,
-      device,
+      device: ManuallyDrop::new(device),
       queue_group,
       swapchain: ManuallyDrop::new(swapchain),
       extent,
@@ -324,7 +325,7 @@ impl core::ops::Drop for HalState {
       self
         .device
         .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
-      // Only drop the `Instance` after _all_ other elements are cleaned up
+      ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
   }

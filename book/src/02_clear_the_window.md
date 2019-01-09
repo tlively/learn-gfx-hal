@@ -6,11 +6,9 @@
 
 ## TODO
 
-* the spec _requires_ that a queue family not be empty, we don't have to check for 0
+* the spec _requires_ that a queue family not be empty, we don't have to check
+  for 0, explain this
 * no-alloc Submissions (file an issue about the Vec thing)
-* fames in flight assert
-* Drop Code doesn't close out the command pool / command buffers right, according to VK
-* Drop code does some unsafe zero replacing, very dodgy.
 
 # Clearing The Window
 
