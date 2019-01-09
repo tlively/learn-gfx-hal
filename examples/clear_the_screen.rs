@@ -1,11 +1,11 @@
 #![allow(clippy::len_zero)]
 
 #[cfg(feature = "dx12")]
-extern crate gfx_backend_dx12 as back;
+use gfx_backend_dx12 as back;
 #[cfg(feature = "metal")]
-extern crate gfx_backend_metal as back;
+use gfx_backend_metal as back;
 #[cfg(feature = "vulkan")]
-extern crate gfx_backend_vulkan as back;
+use gfx_backend_vulkan as back;
 
 #[macro_use]
 extern crate log;
