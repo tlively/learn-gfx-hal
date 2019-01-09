@@ -22,7 +22,7 @@ use gfx_hal::{
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::PipelineStage,
   queue::{family::QueueGroup, Submission},
-  window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
+  window::{Backbuffer, CompositeAlpha, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
@@ -30,7 +30,7 @@ use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBu
 pub const WINDOW_NAME: &str = "Hello Clear";
 
 pub struct HalState {
-  _instance: back::Instance,
+  _instance: ManuallyDrop<back::Instance>,
   _surface: <back::Backend as Backend>::Surface,
   _adapter: Adapter<back::Backend>,
   device: back::Device,
@@ -90,7 +90,7 @@ impl HalState {
 
     // Create A Swapchain
     let (swapchain, extent, backbuffer, format) = {
-      let (caps, opt_formats, present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let (caps, opt_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
       let format = opt_formats.map_or(Format::Rgba8Srgb, |formats| {
         formats
           .iter()
@@ -110,7 +110,9 @@ impl HalState {
         panic!("Couldn't select a Swapchain presentation mode!")
       };
       assert!(caps.image_count.end as usize > Self::MAX_FRAMES_IN_FLIGHT);
-      let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
+      let mut swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
+      assert!(composite_alphas.contains(&CompositeAlpha::Opaque));
+      swap_config.composite_alpha = CompositeAlpha::Opaque;
       let extent = swap_config.extent;
       let (swapchain, backbuffer) = unsafe {
         device
@@ -192,7 +194,7 @@ impl HalState {
     // Create Our CommandPool
     let mut command_pool = unsafe {
       device
-        .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::empty())
+        .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::RESET_INDIVIDUAL)
         .expect("Could not create the raw command pool!")
     };
 
@@ -216,7 +218,7 @@ impl HalState {
     };
 
     Self {
-      _instance: instance,
+      _instance: ManuallyDrop::new(instance),
       _surface: surface,
       _adapter: adapter,
       device,
@@ -292,6 +294,8 @@ impl HalState {
   }
 }
 impl core::ops::Drop for HalState {
+  /// We have to clean up "leaf" elements before "root" elements. Basically, we
+  /// clean up in reverse of the order that we created things.
   fn drop(&mut self) {
     unsafe {
       for fence in self.in_flight_fences.drain(..) {
@@ -303,16 +307,16 @@ impl core::ops::Drop for HalState {
       for semaphore in self.image_available_semaphores.drain(..) {
         self.device.destroy_semaphore(semaphore)
       }
-      for image_view in self.image_views.drain(..) {
-        self.device.destroy_image_view(image_view);
-      }
-      for framebuffer in self.swapchain_framebuffers.drain(..) {
-        self.device.destroy_framebuffer(framebuffer);
-      }
       self.command_pool.take().map(|command_pool| {
         self.device.destroy_command_pool(command_pool.into_raw());
       });
-      /// LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
+      for framebuffer in self.swapchain_framebuffers.drain(..) {
+        self.device.destroy_framebuffer(framebuffer);
+      }
+      for image_view in self.image_views.drain(..) {
+        self.device.destroy_image_view(image_view);
+      }
+      // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
       use core::ptr::read;
       self
         .device
@@ -320,6 +324,8 @@ impl core::ops::Drop for HalState {
       self
         .device
         .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
+      // Only drop the `Instance` after _all_ other elements are cleaned up
+      ManuallyDrop::drop(&mut self._instance);
     }
   }
 }
