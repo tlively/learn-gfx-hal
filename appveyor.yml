@@ -4,24 +4,6 @@ cache:
 
 environment:
   matrix:
-    - channel: stable
-        - target: x86_64-pc-windows-msvc
-        - target: i686-pc-windows-msvc
-        - target: x86_64-pc-windows-gnu
-        - target: i686-pc-windows-gnu
-    - channel: beta
-        - target: x86_64-pc-windows-msvc
-        - target: i686-pc-windows-msvc
-        - target: x86_64-pc-windows-gnu
-        - target: i686-pc-windows-gnu
-    - channel: nightly
-        - target: x86_64-pc-windows-msvc
-        - target: i686-pc-windows-msvc
-        - target: x86_64-pc-windows-gnu
-        - target: i686-pc-windows-gnu
-
-environment:
-  matrix:
   - TARGET: 1.31.0-x86_64-pc-windows-msvc
   allow_failures:
     - TARGET: nightly-x86_64-pc-windows-msvc
