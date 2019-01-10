@@ -92,6 +92,8 @@ impl HalState {
     // Create A Swapchain
     let (swapchain, extent, backbuffer, format) = {
       let (caps, opt_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      //
+      info!("Available Formats: {:?}", opt_formats);
       let format = opt_formats.map_or(Format::Rgba8Srgb, |formats| {
         formats
           .iter()
@@ -99,6 +101,9 @@ impl HalState {
           .cloned()
           .unwrap_or(*formats.get(0).expect("Given an empty preferred format list!"))
       });
+      info!("Selected Format: {:?}", format);
+      //
+      info!("Available PresentMode: {:?}", present_modes);
       let present_mode = if present_modes.contains(&PresentMode::Mailbox) {
         PresentMode::Mailbox
       } else if present_modes.contains(&PresentMode::Fifo) {
@@ -110,10 +115,28 @@ impl HalState {
       } else {
         panic!("Couldn't select a Swapchain presentation mode!")
       };
-      assert!(caps.image_count.end as usize > Self::MAX_FRAMES_IN_FLIGHT);
+      info!("Selected PresentMode: {:?}", present_mode);
+      //
       let mut swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
-      assert!(composite_alphas.contains(&CompositeAlpha::Opaque));
-      swap_config.composite_alpha = CompositeAlpha::Opaque;
+      //
+      info!("Available CompositeAlpha: {:?}", composite_alphas);
+      let selected_composite_alpha = if composite_alphas.contains(&CompositeAlpha::Opaque) {
+        CompositeAlpha::Opaque
+      } else if composite_alphas.contains(&CompositeAlpha::PreMultiplied) {
+        CompositeAlpha::PreMultiplied
+      } else if composite_alphas.contains(&CompositeAlpha::PostMultiplied) {
+        CompositeAlpha::PostMultiplied
+      } else if composite_alphas.contains(&CompositeAlpha::Inherit) {
+        CompositeAlpha::Inherit
+      } else {
+        panic!("Couldn't select a CompositeAlpha mode!")
+      };
+      info!("Selected CompositeAlpha: {:?}", selected_composite_alpha);
+      swap_config.composite_alpha = selected_composite_alpha;
+      //
+      assert!(caps.image_count.end as usize > Self::MAX_FRAMES_IN_FLIGHT);
+      swap_config.image_count = Self::MAX_FRAMES_IN_FLIGHT as u32;
+      //
       let extent = swap_config.extent;
       let (swapchain, backbuffer) = unsafe {
         device
@@ -308,6 +331,11 @@ impl core::ops::Drop for HalState {
       for semaphore in self.image_available_semaphores.drain(..) {
         self.device.destroy_semaphore(semaphore)
       }
+      /* HOW DO WE RESET THE COMMAND BUFFERS?
+      for command_buffer in self.submission_command_buffers.drain(..) {
+        command_buffer.reset(true)
+      }
+      */
       self.command_pool.take().map(|command_pool| {
         self.device.destroy_command_pool(command_pool.into_raw());
       });
