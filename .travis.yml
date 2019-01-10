@@ -7,7 +7,8 @@ cache:
 rust:
   - stable
   - beta
-  - nightly
+  allow_failures:
+    - nightly
 
 before_script:
   - (test -x $HOME/.cargo/bin/cargo-install-update || cargo install cargo-update)

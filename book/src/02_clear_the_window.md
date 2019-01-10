@@ -4,7 +4,7 @@
 Once you have a window open, the _usual_ next step for a graphics tutorial is to
 get you to draw "your first triangle". You see, the fundamental primitive of 3d
 graphics is basically always the triangle. Yes, there are some systems such as
-the [Sega Saturn](https://en.wikipedia.org/wiki/Sega_Saturn), that use quads
+the [Sega Saturn](https://en.wikipedia.org/wiki/Sega_Saturn) that use quads
 instead, but in all the modern systems you'll find it's going to be triangles. A
 triangle is the most flexible primitive to have (even a quad is just two
 triangles, when you think about it), and with enough math and enough parallel
