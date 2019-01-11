@@ -850,7 +850,36 @@ clear.
 
 # Initializing `HalState`
 
-.
+So for our `draw_clear_frame` method to work it expects that we have many things
+on hand as part of `HalState`. Listing them in the order that they're used:
+
+* fences (requires a Device)
+* semaphores (requires a Device)
+* current_frame (just starts at 0)
+* frames_in_flight (comes from the Swapchain)
+* device (requires an Adapter)
+* swapchain (requires a Surface)
+* command_buffers (requires a CommandPool)
+* render_pass (requires a Device)
+* swapchain_framebuffers (requires ImageView values)
+* render_area (comes from the Swapchain)
+* queue_group (requires an Adapter)
+
+But, as you can probably guess, that's _not_ the order that they're initialized.
+You should have noticed that there's some things on there we haven't even
+discussed yet, which also have their requirements. In no particular order:
+
+* image_views (requires a Backbuffer)
+* backbuffer (requires a Surface)
+* Command Pool (requires a Device)
+* Surface (requires a Window)
+* Adapter (requires an Instance)
+* Instance
+
+And so we'll have to sort out all of our initialization code so that we can
+build it all up in the correct order.
+
+TODO
 
 # Cleaning Up `HalState`
 
@@ -859,9 +888,3 @@ clear.
 # Input And LocalState
 
 .
-
-# TODO
-# WIP
-# OLD NOTES PAST HERE
-* the spec _requires_ that a queue family not be empty, we don't have to check
-  for 0, explain this
