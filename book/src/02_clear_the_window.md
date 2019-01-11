@@ -1,29 +1,25 @@
-
 # Clearing The Window
 
 Once you have a window open, the _usual_ next step for a graphics tutorial is to
-get you to draw "your first triangle". You see, the fundamental primitive of 3d
-graphics is basically always the triangle. Yes, there are some systems such as
-the [Sega Saturn](https://en.wikipedia.org/wiki/Sega_Saturn) that use quads
-instead, but in all the modern systems you'll find it's going to be triangles. A
-triangle is the most flexible primitive to have (even a quad is just two
-triangles, when you think about it), and with enough math and enough parallel
-processing you can do anything you want with triangles.
+draw "your first triangle". You see, the fundamental primitive of 3d graphics is
+the triangle. Yes, there are some systems such as the [Sega
+Saturn](https://en.wikipedia.org/wiki/Sega_Saturn) that use quads instead, but
+in all the modern systems you'll find it's going to be triangles. Even a quad is
+just two triangles, when you think about it. With enough math and enough
+parallel processing you can do anything you want with triangles.
 
-Skyrim? Triangles.
-
-Breath of The Wild? Has a few more Triangles than Skyrim.
-
-Super Smash Bros? Just a whole lot of triangles.
+* Skyrim? Triangles.
+* Breath of The Wild? Has a few more triangles than Skyrim.
+* Super Smash Bros? Just a whole lot of triangles.
 
 We'll be covering triangles _quite_ a bit. However, in the context of `gfx-hal`,
-which is like 97% just "whatever Vulkan does", even if you're _not_ using the
-Vulkan backend, there's a great _many_ steps of setup involved between "a window
-that draws nothing" and "a window that draws one triangle".
+which is like 97% "whatever Vulkan does", even if you're _not_ using the Vulkan
+backend, there's a great _many_ steps of setup involved between "a window that
+draws nothing" and "a window that draws one triangle".
 
 In fact the [official gfx-hal docs](https://docs.rs/gfx-hal/0.1.0/gfx_hal/)
-specifically give us a warning about this. They're so short I can include all
-three sentences right here for dramatic effect:
+specifically give us a warning about this. The top level docs are so short I can
+include all three sentences right here for dramatic effect:
 
 > Low-level graphics abstraction for Rust. Mostly operates on data, not types.
 > Designed for use by libraries and higher-level abstractions only.
@@ -32,23 +28,21 @@ There are basically no defaults provided. We have to list out every single
 little step of the entire configuration process. I mean they convert C types
 into Rust types for us, but it's still very "do it yourself". That's _cool_ if
 you actually care about defining it all (which you will some day, I'm sure, or
-you wouldn't be reading this right now), but it's also _sad_ when you're
+you wouldn't be reading this right now), but it's also _long_ when you're
 starting out and want to get something on the screen.
 
-Let's get to it! Since going all the way from nothing "drawing a triangle" will
-probably be too much for a single "lesson" sized unit, we'll stop this lesson at
-an intermediate step. Remember how our `winit` window from last lesson didn't
-refresh itself properly? We can fix just that much and stop there. That _alone_
-will cover a surprising amount of ground.
+Since going all the way to "drawing a triangle" might end up feeling like too
+much at once, we'll stop this lesson at an intermediate step. Remember how our
+`winit` window from last lesson didn't refresh itself properly? We can fix just
+that much and then stop there. That _alone_ will cover a surprising amount of
+ground.
 
 ## Outline Our Target API
 
 So, in the first lesson we had `WinitState` and it just had two public fields.
-There's not much there that can be screwed up, so that's fine. I mean I guess
-you could pair up the wrong `EventLoop` with the wrong `Window` or something,
-but really there's so little there it's not worth worrying about the design on
-that front. Just two public fields, and people can figure out the rest on their
-own.
+There's not much there, it's all safe code, and it's not the focus of our
+lessons, so that's fine. I mean I guess you could pair up the wrong `EventLoop`
+with the wrong `Window` or something, but two public fields is good enough.
 
 With `gfx-hal` it is _wildly_ the opposite situation. We're going to be juggling
 a dozen or more things at once, and most of them are **very** unsafe things that
@@ -61,33 +55,35 @@ then offer a very small, well curated, semantically meaningful set of operations
 that the outside world can access.
 
 Sure sounds like API Design. There's so much that could be said about API
-design.
+design. Let's keep it short:
 
-* Let's keep it short: Always, _Always_, **_Always_** [write the usage code
+* Always, _Always_, **_Always_** [write the usage code
   first.](https://caseymuratori.com/blog_0025)
 
-Even before we know _anything about how `gfx-hal` works_, we're going to just
-write how we _think_ we should be able to use it. How we think it's be easiest
-to use. We'll be calling the methods a lot more than we'll be implementing the
-methods, so unless we end up with some sort of performance disaster or
-impossible requirement we'll keep the exterior simple even if it means the
-interior might end up a little more complex.
+Even before we know _any details about how `gfx-hal` works_, we're going to just
+write out how we _think_ we should be able to use it. How we think it's be
+easiest to use. Once it's built we will be calling the methods a lot more than
+we'll be implementing the methods, so unless we end up with some sort of
+performance disaster or impossible requirement we'll keep the exterior simple
+even if it means the interior might end up a little more complex.
 
 So what's our _usage_ of the `HalState` type look like?
 
 There's lots of answers you could have to that question. Really, there are.
 Obviously since I'm writing this we're going to be using what I came up with,
 but if you think you can get a better solution you should try it out. I'll try
-to explain my thinking as best as I can.
+to explain my thinking as best as I can, and hopefully you'll agree with me.
 
 ### Initialization
 
-We have `WinitState`, we're going to want `HalState` too. Clearly the
-`WinitState` can be made before the `HalState` (since we did last lesson). We'll
-also have a `LocalState`, and that's the grab bag of everything else, and maybe
-we make it before or after the other two things. If you're doing a game or a
-simulation or something that's your `GameState` or `World` or whatever you wanna
-call the type. So far the code looks like this:
+We already have `WinitState`, we're going to want `HalState` too. Clearly the
+`WinitState` can be made before the `HalState` (since we did it last lesson).
+
+We'll also want to have a `LocalState`, and that's the grab bag of everything
+else in the program. If you're doing a game or a simulation or something that's
+your `GameState` or `World` or whatever you wanna call the type.
+
+So far the code outline looks like this:
 
 ```rust
 fn main(){
@@ -100,10 +96,11 @@ fn main(){
 ```
 
 Except, when you think about it, the way that `gfx-hal` initializes itself
-~~probably~~ definitely depends on the `Window` it's going to draw within. So we
-need a `HalState` initialization method that takes a `Window` reference. The
-default name for any initialization method in Rust is just `new`, and I can't
-think of a better name to use, so we'll go with that.
+~~probably~~ definitely depends on the `Window` it's going to draw within. It
+can't be totally default with no inputs. We need a `HalState` initialization
+method that takes a `Window` reference. The default name for any initialization
+method in Rust is just `new`, and I can't think of a better name to use, so
+we'll go with that.
 
 ```rust
 fn main(){
@@ -137,8 +134,8 @@ quality animation.
 
 **Back to code:** The implication here is that each pass through our main loop
 will be one frame of display. We gather up the input for that frame, adjust our
-local variables according to the input (eg: in a game you move the player a tiny
-bit, or whatever), and then render the new state of the world into a frame that
+local variables according to the input (eg: in a game you might move the player a tiny
+bit, or whatever change), and then render the new state of the world into a frame that
 gets shown to the user. Something like this:
 
 ```rust
@@ -158,8 +155,7 @@ fn main(){
 }
 ```
 
-Most of this is fairly obvious based on how the code of the last worked out with
-the event loop and all.
+This should look fairly familiar after what we did in the first lesson.
 
 You may be wondering why the `do_the_render` function is taking a `&mut
 HalState` as the first argument, instead of having it be a `&mut self` method on
@@ -169,25 +165,25 @@ we can.
 
 * If `HalState` doesn't know anything about the `LocalState` then it's a lot
   more likely to focus on reusable drawing operations, and we'll be a lot more
-  likely to have something we can reuse in future situations.
-* Similarly, if `LocalState` doesn't know about `HalState` then it's easier to
-  focus on the "business logic" of the program going through its state changes
-  without worrying about anything else. We could even run the `LocalState`
-  _without graphics at all_ (sometimes called a "headless" mode), which can be
-  very nice if you need to "fast forward" a simulation, or run tests on your CI
-  server.
+  likely to have something we can reuse in future situations (including
+  "practical" situations beyond just this tutorial series).
+* Similarly, if `LocalState` doesn't know about `HalState` then it's easier for
+  it to focus on the "business logic" without worrying about anything else. We
+  could even run the `LocalState` _without graphics at all_ (sometimes called a
+  "headless" mode), which can be nice if you want to do CI tests, or hook it to
+  a server people connect to, or any other unexpected use.
 
 It can often be _tempting_ to make everything into a method on some type, but
 that's an urge we need to resist in this situation.
 
-### What Does `do_the_render` Do?
+### What Does `do_the_render` Actually Do?
 
 I cheated a bit there, because I wrote down a call to `do_the_render` without
 actually saying _what_ it's doing on the inside. That's the part we care about
 the most! That's how we know what our `HalState` API needs to look like.
 
 For this lesson, all we do is clear the screen. That sounds simple enough. Later
-lessons will add more, of course, but this is our starting point.
+lessons will add more, but this is our starting point.
 
 ```rust
 pub fn do_the_render(hal: &mut HalState, locals: &LocalState) {
@@ -195,24 +191,25 @@ pub fn do_the_render(hal: &mut HalState, locals: &LocalState) {
 }
 ```
 
-Hmm, but there might be some sort of error that happens during rendering. Well,
-nothing in `do_the_render` particularly knows about how to handle an error, and
-that should probably be reported to the person that called `do_the_render` in
-case they want to stop if there's an error, so we'll just pass that back up the
-stack.
+That looks okay at first, but there might be some sort of error that happens
+during rendering. Nothing inside `do_the_render` particularly knows about how to
+handle an error, so we'll just pass that back up the stack.
 
 ```rust
-pub fn do_the_render(hal: &mut HalState, locals: &LocalState) -> Result<(), RenderError> {
+pub fn do_the_render(hal: &mut HalState, locals: &LocalState) -> Result<(), &str> {
   hal.draw_clear_frame(locals.color())
 }
 ```
 
-And then in `main` I guess we can just... log the error and quit. It's not ideal
+And then in `main` I guess we can just... log the error and quit? It's not ideal
 for the program to shut itself down unexpectedly, but we don't really have a
 backup strategy at the moment. In a more advanced situation the error might be
 from the user trying to switch graphics settings or something, so you could
-automatically switch back to the previous settings maybe. Depends on the
+automatically switch back to the previous settings in that case. Depends on the
 program, and the error.
+
+Also, in a full program you'd want to use a proper error enum, but we don't know
+what all our possible errors are, so we'll just use string literals for now.
 
 Anyway, now things look more like this:
 
@@ -240,9 +237,10 @@ fn main(){
 
 Usually when working with "foreign" data, anything that comes from outside of
 Rust, you have to consider the possibility that you'll have to manually do some
-cleanup work. `gfx-hal` is not only normal in this regard, but it leans _hard_
-into manual destruction. We'll have to clean up all of our components in an
-extremely controlled manner or it'll cause segfaults on some backends.
+cleanup work. `gfx-hal` is no different. Not only do we need to clean things up
+to avoid leaks when we're done, we need to clean up in the exactly correct
+order. The backend code can segfault your process just by you not shutting it
+down properly.
 
 How do we expose this in our API?
 
@@ -254,9 +252,9 @@ type. Things are smoothest for the user when they can just let a type drop away
 without a care, and we're going to try and allow for such an easy use
 experience. Mostly what this means is that we won't want to have any "getter"
 methods that let an outside user move out anything that needs to be manually
-destroyed later. If they want to check the value of a number or something that's
-totally fine, but anything that needs to be explicitly cleaned up we can't let
-out of our control.
+destroyed later. If they want to check the value of a number or maybe even get a
+`&mut` to some that's fine, but anything that needs to be explicitly cleaned up
+we can't let out of our control.
 
 Now we can see our final outline:
 
@@ -462,7 +460,7 @@ The functions in question have some weird generic bounds that work out for `Vec`
 and `ArrayVec` and similar, but not for arrays themselves. Generics just be like
 that sometimes.
 
-# Making `gfx-hal` Clear The Screen
+# Implementing `draw_clear_frame`
 
 You might think that we'd start by learning how to initialize things, but
 actually our core goal is clearing the screen. Anything else that we do,
@@ -470,6 +468,385 @@ including the initialization, is _only in service to that goal_. So first we'll
 focus on our core goal, then we'll see what we need for that, and then we'll see
 what we need for _that_, until eventually we stop needing to have already done
 something else.
+
+## CommandQueue
+
+The heart of it all is that we want to be able to safely call
+[CommandQueue::submit](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/struct.CommandQueue.html#method.submit),
+which defines the "list" of what to do, and then we call
+[Swapchain::present](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Swapchain.html#method.present),
+which does the work and places the output into the "swapchain" of images that
+the GPU uses from frame to frame.
+
+### `submit`
+
+The actual type of the `submit` method is _super generic_ which means that it
+reads like a pile of space runes:
+
+```rust
+pub unsafe fn submit<'a, T, Ic, S, Iw, Is>(
+    &mut self, 
+    submission: Submission<Ic, Iw, Is>, 
+    fence: Option<&B::Fence>
+)
+where
+    T: 'a + Submittable<B, C, Primary>,
+    Ic: IntoIterator<Item = &'a T>,
+    S: 'a + Borrow<B::Semaphore>,
+    Iw: IntoIterator<Item = (&'a S, PipelineStage)>,
+    Is: IntoIterator<Item = &'a S>,
+```
+
+Gross, right? Let's cut out those generics and look again:
+
+```rust
+pub unsafe fn submit(&mut self, submission: Submission, fence: Option<&B::Fence>)
+```
+
+Okay that's _way_ easier to look at and understand. It's just a rustified
+version of
+[vkQueueSubmit](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/vkQueueSubmit.html).
+Which doesn't mean anything to you right now because we're just starting, but
+like I said at the top: if the `gfx-hal` docs aren't clear on their semantics,
+you can usually assume that Vulkan semantics apply.
+
+* We `submit` a `Submission` into the `CommandQueue`. Instead of giving a count
+  ans a pointer to an array of "VkSubmitInto", we give a single `Submission`,
+  which is itself composed of `IntoIterator` things that I assume get iterated
+  over. I don't know why it's flipped around like that instead of just having us
+  pass in a `&[SubmissionInfo]`, which would be the closest to Vulkan. Probably
+  some other backend forced a divergence.
+* We optionally give a "fence" which gets "signalled" once all of the submitted
+  command buffers have completed execution.
+
+### `present`
+
+The `present` method looks like this
+
+```rust
+unsafe fn present<'a, C, S, Iw>(
+    &'a self, 
+    present_queue: &mut CommandQueue<B, C>, 
+    image_index: SwapImageIndex, 
+    wait_semaphores: Iw
+) -> Result<(), ()>
+where
+    Self: 'a + Sized + Borrow<B::Swapchain>,
+    C: Capability,
+    S: 'a + Borrow<B::Semaphore>,
+    Iw: IntoIterator<Item = &'a S>, 
+```
+
+And if we cut out the extra stuff:
+
+```rust
+unsafe fn present(
+    &self, 
+    present_queue: &mut CommandQueue<B, C>,
+    image_index: SwapImageIndex,
+    wait_semaphores: Iw) -> Result<(), ()>
+```
+
+So `present` takes a `&mut` to our `CommandQueue`, a target index within the
+Swapchain to present to, and a semaphore to wait on before actually presenting
+the image. This works like
+[vkQueuePresentKHR](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/vkQueuePresentKHR.html).
+When we call `submit`, one of the Submission elements is going to be a semaphore
+to signal when the rendering is done. When we call `present` we give it that
+same semaphore to wait on before presenting the image, so that the user only
+sees complete images.
+
+### Fences?
+
+A [fence](https://en.wikipedia.org/wiki/Memory_barrier) (aka
+[VkFence](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkFence.html))
+is one of the two synchronization primitives we'll be dealing with. It's
+basically just a bool, it can "signaled" or "unsignaled". You can share a fence
+between threads and everyone always sees the current state, so it's _like_
+having an
+[AtomicBool](https://doc.rust-lang.org/core/sync/atomic/struct.AtomicBool.html).
+
+Fences are for CPU to GPU synchronization. The CPU can wait on a fence, and the
+GPU will signal the fence when it's done whatever it's supposed to have done.
+
+### Semaphores?
+
+A [semaphore](https://en.wikipedia.org/wiki/Semaphore_(programming)) (aka
+[VkSemaphore](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkSemaphore.html))
+is the other synchronization primitive. In some contexts a semaphore can be any
+integer value, but in a Vulkan / `gfx-hal` context they can only be "signaled"
+or "unsignaled".
+
+The big difference between a fence and a semaphore is that semaphores are for
+GPU to GPU synchronization. When once part of a graphics pipeline (such as
+presentation to the swapchain) depends on another part of the pipeline (such as
+command buffer processing), then you describe that dependency to the GPU using a
+semaphore.
+
+## Submission
+
+Supposing that we already have a `CommandQueue` from somewhere, we need to give
+it a `Submission` of what to do.
+
+```rust
+pub struct Submission<Ic, Iw, Is> {
+    pub command_buffers: Ic,
+    pub wait_semaphores: Iw,
+    pub signal_semaphores: Is,
+}
+```
+
+Hmm, but the `submit` method had extra bounds in there:
+
+```rust
+  T: 'a + Submittable<B, C, Primary>,
+  Ic: IntoIterator<Item = &'a T>,
+  S: 'a + Borrow<B::Semaphore>,
+  Iw: IntoIterator<Item = (&'a S, PipelineStage)>,
+  Is: IntoIterator<Item = &'a S>,
+```
+
+So if we put that together, and allow ourselves to use some slightly fake Rust
+syntax for just a moment, we need to build this:
+
+```rust
+pub struct Submission {
+    pub command_buffers: IntoIterator<Item = &'a Submittable<B, C, Primary>>,
+    pub wait_semaphores: IntoIterator<Item = (&'a Borrow<B::Semaphore>, PipelineStage)>,
+    pub signal_semaphores: IntoIterator<Item = &'a Borrow<B::Semaphore>>,
+}
+```
+
+* `command_buffers` is our
+  [Submittable](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/trait.Submittable.html)
+  things, which are `Borrow<B::CommandBuffer>`, so we can think of that as being
+  "sorta like &CommandBuffer".
+* `wait_semaphores` gives the semaphores that this submission has to _wait on
+  before it starts_. Each semaphore is paired with a
+  [PipelineStage](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pso/struct.PipelineStage.html),
+  allowing your submission to wait for a stage, do some work at that stage, wait
+  for another stage, do some more work at the new stage, and so on.
+* `signal_semaphores` gives a list of semaphores that this submission _will
+  signal once it completes_. It doesn't say, but I'm guessing that all the
+  semaphores just get signaled at once at the end of the Submission.
+
+All of this is basically what you find in the
+[VkSubmitInfo](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkSubmitInfo.html)
+struct.
+
+### ArrayVec Submissions
+
+Remember when I said that we'd use the ArrayVec to avoid allocations per frame?
+That's this part. It's simple really. Instead of writing something like:
+
+```rust
+let command_buffers = vec![the_command_buffer];
+```
+
+You write something like
+
+```rust
+let command_buffers: ArrayVec<[_; 1]> = [the_command_buffer].into();
+```
+
+## Submitting And Presenting
+
+So far it sounds like we want something like this
+
+```rust
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+    // SETUP FOR THIS FRAME
+    // ...
+
+    // RECORD SOME COMMANDS
+    // ...
+
+    // SUBMISSION
+    let command_buffers: ArrayVec<[_; 1]> = [the_command_buffer].into();
+    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    let submission = Submission {
+      command_buffers,
+      wait_semaphores,
+      signal_semaphores,
+    };
+    unsafe {
+      the_command_queue.submit(submission, Some(flight_fence));
+      the_swapchain.present(&mut the_command_queue, i_u32, present_wait_semaphores)
+        .map_err(|_|"Failed to present into the swapchain!")
+    }
+  }
+```
+
+For all my fuss about things being so "manual and on your own", that seems
+fairly reasonable so far.
+
+## Recording Commands
+
+So we need to fill up a
+[CommandBuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/struct.CommandBuffer.html)
+with the operations that we want to have happen during the draw process.
+
+All we want to do is clear the screen, that's got to be easy enough.
+
+Well, it turns out that a CommandBuffer isn't totally free to make, so we want
+to make them ahead of time and then pick out and use a particular command buffer
+each frame. Also, we want to grab a `&mut` to the particular command buffer when
+recording it, and then we'll also need a `&` to it when we get it to the
+submission, so that calls for the ever-lovable inner scope. Thankfully, in a
+sense, recording to a CommandBuffer is all unsafe, so we can kill two birds with
+one stone.
+
+A CommandBuffer is actually wrapping around a
+[RawCommandBuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/trait.RawCommandBuffer.html)
+with some metadata for bonus type safety. All the real documentation is given on
+the RawCommandBuffer type. Unfortunately, the methods aren't _exactly_ the same
+name. Hopefully that's fixed in 0.2.
+
+We start by calling `begin`
+
+```rust
+pub unsafe fn begin(&mut self, allow_pending_resubmit: bool)
+```
+
+To begin the buffer overall. Then we start a particular render pass with
+
+```rust
+pub unsafe fn begin_render_pass_inline<T>(
+    &mut self, 
+    render_pass: &B::RenderPass, 
+    frame_buffer: &B::Framebuffer, 
+    render_area: Rect, 
+    clear_values: T
+) -> RenderPassInlineEncoder<B>
+where
+    T: IntoIterator,
+    T::Item: Borrow<ClearValue>, 
+```
+
+Which records a render pass with no secondary command buffers.
+
+Next we... immediately finish the render pass. The RenderPass struct will define
+how to deal with the color buffer, including the clear effect, and the
+ClearValue picks what color to clear to, so we're already done.
+
+```rust
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+    // SETUP FOR THIS FRAME
+    // ...
+
+    // RECORD SOME COMMANDS
+    {
+      let buffer = &mut self.command_buffers[i_usize];
+      let clear_values = [ClearValue::Color(ClearColor::Float(color))];
+      buffer.begin(false);
+      buffer.begin_render_pass_inline(
+        &self.render_pass,
+        &self.swapchain_framebuffers[i_usize],
+        self.render_area,
+        clear_values.iter(),
+      );
+      buffer.finish();
+    }
+
+    // SUBMISSION
+    // ...
+  }
+```
+
+## Frame Setup
+
+What's left to so as setup? Well, the GPU can be doing more than one of these
+buffer things at once. When you've got several images all going on it's called
+having frames "in flight". At the start of each frame of work, we have to pick
+the right fences and semaphores and all that for the current frame that we're
+going to be working with. The simplest way is to just keep them in parallel
+vectors and go through them like a ring buffer.
+
+However, even once we've picked our current sync primitives, we have to
+[acquire](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/vkAcquireNextImageKHR.html)
+a particular image to work with out of the swapchain. We don't move the whole
+image out of the swapchain, we just get an index to target later with the
+`present` method.
+
+## Final `draw_clear_frame` Code
+
+So now we put it all together, with the signaling in big caps to help make it
+clear.
+
+* Get our sync primitives out of our ring buffers
+* WAIT on the current `flight_fence` to know we're in the clear to use this
+  position of our ring buffer.
+* Reset that fence so we can pass it as part of our submission later.
+* Grab an image index that will SIGNAL the `image_available` semaphore once it's
+  fully ready.
+* Record our command buffer while we're waiting for that.
+* Submit a command buffer to WAIT on `image_available` and SIGNAL both
+  `render_finished` and `flight_fence`.
+* Present the results into the swapchain after a WAIT on `render_finished`
+
+```rust
+  /// Draw a frame that's just cleared to the color specified.
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+    // SETUP FOR THIS FRAME
+    let flight_fence = &self.in_flight_fences[self.current_frame];
+    let image_available = &self.image_available_semaphores[self.current_frame];
+    let render_finished = &self.render_finished_semaphores[self.current_frame];
+    // Advance the frame _before_ we start using the `?` operator
+    self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
+
+    let (i_u32, i_usize) = unsafe {
+      self
+        .device
+        .wait_for_fence(flight_fence, core::u64::MAX)
+        .map_err(|_| "Failed to wait on the fence!")?;
+      self
+        .device
+        .reset_fence(flight_fence)
+        .map_err(|_| "Couldn't reset the fence!")?;
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    // RECORD COMMANDS
+    unsafe {
+      let buffer = &mut self.command_buffers[i_usize];
+      let clear_values = [ClearValue::Color(ClearColor::Float(color))];
+      buffer.begin(false);
+      buffer.begin_render_pass_inline(
+        &self.render_pass,
+        &self.swapchain_framebuffers[i_usize],
+        self.render_area,
+        clear_values.iter(),
+      );
+      buffer.finish();
+    }
+
+    // SUBMISSION AND PRESENT
+    let command_buffers = &self.command_buffers[i_usize..=i_usize];
+    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    // yes, you have to write it twice like this. yes, it's silly.
+    let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    let submission = Submission {
+      command_buffers,
+      wait_semaphores,
+      signal_semaphores,
+    };
+    let the_command_queue = &mut self.queue_group.queues[0];
+    unsafe {
+      the_command_queue.submit(submission, Some(flight_fence));
+      self
+        .swapchain
+        .present(the_command_queue, i_u32, present_wait_semaphores)
+        .map_err(|_| "Failed to present into the swapchain!")
+    }
+  }
+```
 
 # Initializing `HalState`
 
@@ -488,802 +865,3 @@ something else.
 # OLD NOTES PAST HERE
 * the spec _requires_ that a queue family not be empty, we don't have to check
   for 0, explain this
-
-# Create A HalState Struct
-
-Okay, okay, we've got all out initial dependencies in place, time to get back to
-code.
-
-First we declare that struct that's going to hold all of our `gfx-hal` state.
-
-```rust
-#[derive(Debug)]
-pub struct HalState {
-  // TODO
-}
-```
-
-We definitely want to have a construction method that will hide away _as much_ of
-the initialization as we can, because there's going to be piles of it.
-
-```rust
-impl HalState {
-  pub fn new() -> Self {
-    unimplemented!()
-  }
-}
-```
-
-## Create An Instance
-
-The very first thing we do in our `HalState::new` method is create an
-[Instance](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html). This does
-whatever minimal things are required to activate your selected backend API. It's
-quite simple. Every backend provides a _type_ called `Instance` that also
-implements the `Instance` _trait_. The types, by convention, have a method
-called `create` which you pass a `&str` (the name for your instance) and `u32`
-(the version for your instance). Don't forget that `create` isn't part of the
-Instance trait, it's just a convention for now. In future versions of `gfx-hal`
-it might become more formalized.
-
-```rust
-pub struct HalState {
-  instance: back::Instance,
-}
-impl HalState {
-  pub fn new() -> Self {
-    let instance = back::Instance::create(WINDOW_NAME, 1);
-
-    Self { instance }
-  }
-}
-```
-
-As you can see, we add a field in the struct definition, and then in `new` we
-create that value. At the end of `new` we pack up all the stuff we've created.
-Right now it's just one thing but we'll have about 20 things by the end of this.
-After this first one I won't show the whole struct and new method each time,
-we'll just follow the same pattern over and over:
-
-* Add a field to the struct
-* Generate a value of that type
-* Put that value into the struct we return at the bottom of `new`
-
-This pattern is really obvious, but it'll get us pretty far. Note that not all
-the values that end up in the base scope of our `new` method will go into the
-`HalState` struct. Some of them just are just needed when going between each of
-the major initialization steps, but we don't store them long term.
-
-Unfortunately, we can no longer `derive(Debug)` on our struct, since the
-`Instance` type doesn't have `Debug`. That's a little sad, but we'll live
-through it.
-
-## Create a Surface
-
-Once our Instance is started, we want to make a
-[Surface](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Surface.html). This
-is the part where `winit` and `gfx-hal` touch each other just enough for them to
-communicate.
-
-```rust
-    let mut surface = instance.create_surface(window);
-```
-
-The `create_surface` call is another of those methods that's part of the
-Instance _types_ that each backend just happens to agree to have, rather than
-being on the Instance _trait_ itself. You just pass in a `&Window` and it does
-the right thing.
-
-This means that our `new` method will need to accept a `&Window`. Spoilers:
-that's all it'll need even once we're all done. So we can fill in that question
-mark with a real argument list:
-
-```rust
-impl HalState {
-  pub fn new(window: &Window) -> Self {
-    // STUFF
-  }
-}
-```
-
-## Create an Adapter
-
-Next we need an
-[Adapter](https://docs.rs/gfx-hal/0.1.0/gfx_hal/adapter/struct.Adapter.html),
-which represents the graphics card you'll be using. A given Instance might have
-more than one available, so we call
-[enumerate_adapters](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html#tymethod.enumerate_adapters)
-on our Instance to get the list of what's available. How do we decide what to
-use? Well, you might come up with any criteria you like. The biggest thing you
-probably care about is if the Adapter can do graphics work and/or computation
-work. For now we just want one that can do graphics work.
-
-Each Adapter has a `Vec<B::QueueFamily>`, and a
-[QueueFamily](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/family/trait.QueueFamily.html)
-has methods to check if that QueueFamily supports graphics, compute, and/or
-transfer. If a QueueFamily supports graphics or compute it will always also
-support transfer (otherwise you wouldn't be able to send it things to draw and
-compute), but some QueueFamily could theoretically support _just_ transfer and
-nothing else. Also, each QueueFamily has a maximum number of queues that's
-available, and we obviously need to have more than 0 queues available for it to
-be acceptable. Finally, we obviously need to make sure that our Surface supports
-the QueueFamily we're selecting.
-
-So we have a `Vec<Adapter<Self::Backend>>` and each of those holds a
-`Vec<B::QueueFamily>`, sounds like it's time for some Iterator magic.
-
-```rust
-    let adapter = instance
-      .enumerate_adapters()
-      .into_iter()
-      .find(|a| {
-        a.queue_families
-          .iter()
-          .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
-      })
-      .expect("Couldn't find a graphical Adapter!");
-```
-
-## Open up a Device
-
-Okay so once we have an Adapter selected, we have to actually call
-[open](https://docs.rs/gfx-hal/0.1.0/gfx_hal/adapter/trait.PhysicalDevice.html#tymethod.open)
-on the associated PhysicalDevice to start using it. Think of this as the
-difference between knowing the IP address you want to connect to and actually
-opening the TCP socket that goes there. Look, they even have an example in the
-docs.
-
-We need to specify a reference to a slice of QueueFamily and QueuePriority tuple
-pairs. Well we know how to get a QueueFamily we want, we just did that. A
-[QueuePriority](https://docs.rs/gfx-hal/0.1.0/gfx_hal/adapter/type.QueuePriority.html)
-is apparently just a 0.0 to 1.0 float for how high of priority we want. They use
-1.0 in their example, and that seems fine to me.
-
-Calling `open` gives us a Result, but we don't really know what to do if there's
-a failure, so we'll just `expect` on that with a message like we have with other
-things so far. This gives us a
-[Gpu](https://docs.rs/gfx-hal/0.1.0/gfx_hal/struct.Gpu.html), which just bundles
-up a Device and some Queues. The Queues value lets us call
-[take](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/family/struct.Queues.html#method.take)
-to try and get out a particular QueueGroup by a specified id value. A QueueGroup
-is just a vector of CommandQueue values with some metadata. We call `take` with
-the id value of the QueueFamily we've been working with and hopefully get a
-QueueGroup out. There's technically another Option layer we have to `expect`
-away, but we're used to that by now I think. Once we have a QueueGroup, we can
-get that vector of CommandQueue values and call it a day. Doesn't hurt much to
-throw in a `debug_assert!` that we've really got at least one `CommandQueue`
-available. We always _should_, because of the `filter` on the queue_families
-that we did, but re-checking things you think are probably already true is the
-whole point of a debug_assert after all.
-
-TODO: max_queues can never be 0
-
-```rust
-    let (device, command_queues, queue_type, qf_id) = {
-      let queue_family = adapter
-        .queue_families
-        .iter()
-        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
-        .expect("Couldn't find a QueueFamily with graphics!");
-      let Gpu { device, mut queues } = unsafe {
-        adapter
-          .physical_device
-          .open(&[(&queue_family, &[1.0; 1])])
-          .expect("Couldn't open the PhysicalDevice!")
-      };
-      let queue_group = queues
-        .take::<Graphics>(queue_family.id())
-        .expect("Couldn't take ownership of the QueueGroup!");
-      debug_assert!(queue_group.queues.len() > 0);
-      (device, queue_group.queues, queue_family.queue_type(), queue_family.id())
-    };
-```
-
-The `queue_type` and `qf_id` values will be used in a later step, but don't need
-to be saved in our `HalState` struct.
-
-## Create A Swapchain
-
-The next thing to make is a
-[Swapchain](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Swapchain.html).
-It's uh, basically a chain of images that get swapped into place, like the name
-says. As you might know, animation and video is a series of still images. When
-you show them one after the other very quickly the viewer's brain registers it
-as movement. The minimum speed you need for animation is actually very low, like
-15fps or lower. Older TV shows run at around 24fps. With a computer these days
-you're basically expected to use 30fps as the "low" framerate and 60fps as the
-"standard" framerate.
-
-Of course, since these images will be presented on the surface by the physical
-device, we start with the
-[compatibility](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Surface.html#tymethod.compatibility)
-method to make sure that they can agree on something. This gets us a whole bunch
-of information, only some of which we care about right now. We're trying to call
-[Device::create_swapchain](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_swapchain).
-We have a surface, and we can specify `None` as our old swapchain since we don't
-have a previous swapchain. In between those we need to have a
-[SwapchainConfig](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/struct.SwapchainConfig.html).
-We use
-[from_caps](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/struct.SwapchainConfig.html#method.from_caps)
-to just pass along our current capabilities, but we need to pick a specific
-[Format](https://docs.rs/gfx-hal/0.1.0/gfx_hal/format/enum.Format.html) (the
-layout of the image data) and a default extent (how many pixels wide and tall
-the images are). The capabilities has an `extents` field which can give us our
-default extent, so we just need a Format.
-
-There's like, a million Formats available. You better believe that all of them
-are used by someone, somewhere. It might be the case that you have image data
-that's already in some format, and you try to pick that to cut down on data
-conversion. We don't have any data already though, so we don't super care about
-the format. Turns out the surface might not care about the format either. It
-gives back an `Option<Vec<Format>>`, and `None` means "I don't care". If it
-doesn't care, we'll pick `Rgba8Srgb`, which is the most commonly used form of
-pixel data. `Rgba8` means "red, green, blue, 8 bits each", and `Srgb` literally
-just stands for "standard red green blue". If there _is_ a preferred list we'll
-take whatever `Srgb` offering they have. It's _possible_ (in terms of the type
-system) that there's a preferred list given but it ends up being empty, which is
-weird enough we'll throw a panic at that point.
-
-Finally, we also want to specify a
-[PresentMode](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/enum.PresentMode.html).
-This is how we get that magical vsync thing that we wanted. There's a list of
-possible modes that we get, and we want to pick the first one according to the
-following list of "best to worst":
-
-* Mailbox: Always VSync, and if you have **3 or more images** it'll keep
-  rendering frames _faster_ than 60fps. One will always be "the frame being
-  shown", one is tagged as the "most recent frame", and all the rest of the
-  slots are cycled between as render targets (so _more_ than 3 isn't actually
-  very helpful). This is the "triple buffering" style that you might have heard
-  about. The user never sees graphical tears, and your user input to user output
-  time always stays as low as possible. If you use this mode with only 2 images
-  in your swapchain it basically ends up working like Fifo mode.
-* Fifo: Always VSync, and always show frames in the exact order that they're
-  created. This works best if you've got **2** images in your swapchain: one
-  "being shown" and one either "being worked on" or "finished" (aka "double
-  buffering"). _More_ than 2 images in your chain when using this mode will
-  cause a longer delay between user input and image on screen.
-* Relaxed: VSync as much as possible, but if we miss the timing by only a little
-  bit just go anyway. At this point we're not even being precise about our
-  results, but you might want to accept this as a possible fallback mode if the
-  GPU doesn't support one of the first two, since at least there's probably a
-  vsync _most_ of the time.
-* Immediate: No VSync at all. Maybe someone wants it, but I don't.
-
-```rust
-    let (swapchain, extent, backbuffer, format) = {
-      let (caps, opt_formats, present_modes, _composite_alphas) = surface.compatibility(&adapter.physical_device);
-      let format = opt_formats.map_or(Format::Rgba8Srgb, |formats| {
-        formats
-          .iter()
-          .find(|format| format.base_format().1 == ChannelType::Srgb)
-          .cloned()
-          .unwrap_or(*formats.get(0).expect("Given an empty preferred format list!"))
-      });
-      let present_mode = if present_modes.contains(&PresentMode::Mailbox) {
-        PresentMode::Mailbox
-      } else if present_modes.contains(&PresentMode::Fifo) {
-        PresentMode::Fifo
-      } else if present_modes.contains(&PresentMode::Relaxed) {
-        PresentMode::Relaxed
-      } else if present_modes.contains(&PresentMode::Immediate) {
-        PresentMode::Immediate
-      } else {
-        panic!("Couldn't select a Swapchain presentation mode!")
-      };
-      let swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
-      let extent = swap_config.extent;
-      let (swapchain, backbuffer) = unsafe {
-        device
-          .create_swapchain(&mut surface, swap_config, None)
-          .expect("Failed to create the swapchain!")
-      };
-      (swapchain, extent, backbuffer, format)
-    };
-```
-
-The `backbuffer` and `format` values will be used in a later step, but don't need
-to be saved in our `HalState` struct.
-
-## Define A RenderPass
-
-Now that we've decided on a Format, we can define our
-[RenderPass](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Backend.html#associatedtype.RenderPass).
-This is unfortunately one of those things where the details are defined by each
-particular backend. To make one, we call
-[Device::create_render_pass](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_render_pass).
-Basically, [rendering can get really
-complicated](https://stackoverflow.com/a/48304000/455232). Right now we just
-want to clear the screen, so we're going to define an
-[Attachment](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/struct.Attachment.html)
-for the color change and then a single
-[SubpassDesc](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/struct.SubpassDesc.html).
-All we want to do is clear the screen, so we define an Attachment for the color
-buffer (there's other types of buffer too, but we don't care at the moment). It
-clears the color when the buffer is loaded, and then stores the buffer when the
-subpass is done. You might have more than one subpass, and in that case _only
-one_ of your passes would clear out the old image, and the rest would just keep
-adding new edits to your work so far. Or, however you wanna do it. As you can
-see if you check the docs, there's piles of options to dig in to here. You can
-be sure that we'll get into more of this later.
-
-```rust
-    let render_pass = {
-      let color_attachment = Attachment {
-        format: Some(format),
-        samples: 1,
-        ops: AttachmentOps {
-          load: AttachmentLoadOp::Clear,
-          store: AttachmentStoreOp::Store,
-        },
-        stencil_ops: AttachmentOps::DONT_CARE,
-        layouts: Layout::Undefined..Layout::Present,
-      };
-      let subpass = SubpassDesc {
-        colors: &[(0, Layout::ColorAttachmentOptimal)],
-        depth_stencil: None,
-        inputs: &[],
-        resolves: &[],
-        preserves: &[],
-      };
-      unsafe {
-        device
-          .create_render_pass(&[color_attachment], &[subpass], &[])
-          .expect("Couldn't create a render pass!")
-      }
-    };
-```
-
-## Create The ImageViews
-
-Next we're going to take the Image values that our Backbuffer has and make one
-ImageView each. This actually doesn't use anything from the `render_pass` step,
-not all of the steps have a strict dependency.
-
-```rust
-    let image_views: Vec<(<back::Backend as Backend>::ImageView)> = match backbuffer {
-      Backbuffer::Images(images) => images
-        .into_iter()
-        .map(|image| unsafe {
-          device
-            .create_image_view(
-              &image,
-              ViewKind::D2,
-              format,
-              Swizzle::NO,
-              SubresourceRange {
-                aspects: Aspects::COLOR,
-                levels: 0..1,
-                layers: 0..1,
-              },
-            )
-            .expect("Couldn't create the image_view for the image!")
-        })
-        .collect(),
-      Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
-    };
-```
-
-We won't be using the ImageViews _directly_, but we'll need them in the next
-step, and we'll also need to keep them around to manually clean up at the end.
-
-## Create Our FrameBuffers
-
-Once our ImageView values are all set we'll use them to make our FrameBuffer
-values, which is what you _actually_ tell the GPU to draw with.
-
-```rust
-    let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-      image_views
-        .iter()
-        .map(|image_view| unsafe {
-          device
-            .create_framebuffer(
-              &render_pass,
-              vec![image_view],
-              Extent {
-                width: extent.width as u32,
-                height: extent.height as u32,
-                depth: 1,
-              },
-            )
-            .expect("Failed to create a framebuffer!")
-        })
-        .collect()
-    };
-```
-
-## Create Our CommandPool
-
-Next, we make a
-[CommandPool](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pool/struct.CommandPool.html).
-As with the framebuffer part of things, this doesn't strictly depend on the
-previous step. The idea here is that the GPU does _as little checking as
-possible_, so internally it's using a thing that `gfx-hal` calls a
-`RawCommandPool`. We want a little type safety on top, so we wrap that up in a
-CommandPool which carries some PhantomData about what types of commands are
-appropriate for that pool. Our Device gives us the RawCommandPool, we check that
-it supports Graphics like we want, and then we wrap it into a CommandPool.
-
-```rust
-    let mut command_pool = unsafe {
-      let raw_command_pool = device
-        .create_command_pool(qf_id, CommandPoolCreateFlags::empty())
-        .expect("Could not create the raw command pool!");
-      assert!(Graphics::supported_by(queue_type));
-      CommandPool::<back::Backend, Graphics>::new(raw_command_pool)
-    };
-```
-
-We need the CommandPool in the next step, but after that we don't use it
-directly, so we'll store it within HalState as an Option<CommandPool> value,
-because that makes the cleanup easier later on.
-
-## Create Our CommandBuffers
-
-Once our CommandPool is ready, we can get some
-[CommandBuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/struct.CommandBuffer.html)
-values, which is what we _actually_ write out our drawing commands with. You
-write into a CommandBuffer and then "submit" the buffer to the GPU and it does
-the rest. Since we'll be doing the writing and submitting later on a frame by
-frame basis, we can just get some now without writing anything to them.
-
-```rust
-    let submission_command_buffers: Vec<_> = swapchain_framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
-```
-
-## Create Our Sync Primitives
-
-I told you that the GPU avoids as many checks as possible by default, but that
-even includes memory synchronization checks. Instead, we have to make a pile of
-sync primitives and then use them by hand every frame.
-
-For now, we just make a pile of them, and they'll go into use once we start
-doing the drawing. We want to have one of each primitive per frame "in flight".
-This is related to that `PresentMode` concept above. For our example we want to
-have 3, so we'll define it as a const in the HalState struct.
-
-```rust
-impl HalState {
-  const MAX_FRAMES_IN_FLIGHT: usize = 3;
-}
-```
-
-In your own program you might want to have it depend on how much video memory is
-available or some other factor that you check for at runtime.
-
-The actual creation process is unexciting, we make semaphores for images being
-available, semaphores for rendering of images being finished, and fences for an
-image being in flight.
-
-```rust
-    let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
-      let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-      let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-      let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
-      for _ in 0..Self::MAX_FRAMES_IN_FLIGHT {
-        image_available_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-        render_finished_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-        in_flight_fences.push(device.create_fence(true).expect("Could not create a fence!"));
-      }
-      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
-    };
-```
-
-## Wrap Up HalState
-
-Now we're all done, except that we also want to add a `current_frame` value so
-that we know which of those sync primitive slots we're on within the vectors we
-just set up.
-
-The only thing left to do is return our new struct.
-
-```rust
-    Self {
-      _instance: instance,
-      _surface: surface,
-      _adapter: adapter,
-      device,
-      command_queues,
-      swapchain,
-      extent,
-      render_pass,
-      image_views,
-      swapchain_framebuffers,
-      command_pool: Some(command_pool),
-      submission_command_buffers,
-      image_available_semaphores,
-      render_finished_semaphores,
-      in_flight_fences,
-      current_frame: 0,
-    }
-```
-
-# Drawing A Clear Frame
-
-Now that we've got all of our HalState declared, let's make it able to draw a
-frame to a designated clear color.
-
-This whole method is just... just one big unsafe block. Or, well, we could make
-the method be unsafe, but basically we have to blindly mask away the unsafety at
-some point, so _oh well_.
-
-## Not Using Expect Anymore
-
-In some sense, it's _maybe_ okay for an example to have a bunch of uses of
-`expect` despite the fact that there might reasonably be errors. Don't get me
-wrong, you should always avoid a panic you don't need in your long term code,
-but since we don't really know what we're doing yet, and since we don't really
-know how to recover from problems yet, we've kinda got no choice except to
-panic.
-
-It's still not at all elegant.
-
-So, moving forward we'll avoid panics as much as we can. To start with instead
-of having some method on HalState like
-
-```rust
-pub fn draw_clear_frame(&mut self, color: [f32; 4])
-```
-
-We're going to make it be
-
-```rust
-pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str>
-```
-
-This is a little better. Not the best. In the long term we'd want to sort out
-all the possible error cases and classify them into a big enum or something.
-That'd be neat, and easy for the caller to match on when an error does happen.
-Except we don't really _know_ all possible errors yet, so we'll just start with
-string literals. Just to keep ourselves in the habit of returning a Result
-instead of triggering a panic.
-
-## Select Our Sync Primitives
-
-First we'll get out the sync primitives for the frame count we're on.
-
-```rust
-      let fence = &self.in_flight_fences[self.current_frame];
-      let image_available = &self.image_available_semaphores[self.current_frame];
-      let render_finished = &self.render_finished_semaphores[self.current_frame];
-```
-
-## Select An Image
-
-Now we have to pick what image we're working on. We wait for the fence of this
-index so that we don't overwrite an image while it's actually in flight. Then we
-reset it, and try to acquire an image. The image isn't necessarily immediately
-ready, so we pass in a semaphore here that will be signalled in a moment.
-
-```rust
-      self
-        .device
-        .wait_for_fence(fence, core::u64::MAX)
-        .map_err(|_| "Failed to wait on the fence!")?;
-      self.device.reset_fence(fence).map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      let i = image_index as usize;
-```
-
-## Write The Command Buffer
-
-With an index in hand, we record a command buffer. We pick out the one for the
-index we got and tell it to clear the whole render area to the color that was
-given in the method argument. That's it, that's all we're gonna do.
-
-The whole thing goes inside an dummy scope so that the `&mut` on the submission
-command buffers goes away before the next step.
-
-```rust
-      {
-        let command_buffer = &mut self.submission_command_buffers[i];
-        command_buffer.begin(true);
-        let render_area = Rect {
-          x: 0,
-          y: 0,
-          w: self.extent.width as i16,
-          h: self.extent.height as i16,
-        };
-        let clear_values = [ClearValue::Color(ClearColor::Float(color))];
-        command_buffer.begin_render_pass_inline(&self.render_pass, &self.swapchain_framebuffers[i], render_area, clear_values.iter());
-        command_buffer.finish();
-      }
-```
-
-## Submit The Buffer, Present The Image
-
-Once we've got our command buffer all written we have to submit it. Once it's
-been properly submitted, we have to "present" the image as a separate step. Of
-course the submission might be finished recording before the image we're doing
-it for is ready, and we might try to present it before the commands have
-actually been completed. This is where all those sync primitives play their
-part.
-
-Once the call to present returns we do the equivalent of something like
-`self.current_frame += 1`, except that we need it to also roll around when we
-hit our MAX_FRAMES_IN_FLIGHT value, so there's a mod too. Divisions are slow and
-all, but we can pretty much trust the compiler to turn this mod into a mul and
-shift operation, since it's mod by a constant
-([godbolt](https://rust.godbolt.org/z/Drwbg0)).
-
-```rust
-      let submission = Submission {
-        command_buffers: &self.submission_command_buffers[i..=i],
-        wait_semaphores: vec![(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)],
-        signal_semaphores: vec![render_finished],
-      };
-      self.command_queues[0].submit(submission, Some(fence));
-      self
-        .swapchain
-        .present(&mut self.command_queues[0], image_index, vec![render_finished])
-        .map_err(|_| "Couldn't present the image!")?;
-      self.current_frame = (self.current_frame + 1) % Self::MAX_FRAMES_IN_FLIGHT;
-      Ok(())
-```
-
-# Cleanup Code
-
-At the end of it all we want to clean up our stuff. Sadly, `gfx-hal` doesn't
-clean up much automatically.
-
-We just call `self.device.destroy_thing` for each thing that needs to be
-destroyed. That's not complicated. What makes it complex is that a few things
-are difficult to move out of a borrowed context.
-
-See, Drop is defined to have a method `drop` that takes `&mut self`, like this
-
-```rust
-impl core::ops::Drop for HalState {
-  fn drop(&mut self) {
-    // STUFF
-  }
-}
-```
-
-And then all the vectors we can drain out:
-
-```rust
-      for fence in self.in_flight_fences.drain(..) {
-        self.device.destroy_fence(fence)
-      }
-      for semaphore in self.render_finished_semaphores.drain(..) {
-        self.device.destroy_semaphore(semaphore)
-      }
-      for semaphore in self.image_available_semaphores.drain(..) {
-        self.device.destroy_semaphore(semaphore)
-      }
-      for image_view in self.image_views.drain(..) {
-        self.device.destroy_image_view(image_view);
-      }
-      for framebuffer in self.swapchain_framebuffers.drain(..) {
-        self.device.destroy_framebuffer(framebuffer);
-      }
-```
-
-And the CommandPool is in an Option, so we can use `take` and then `map` to cleanly handle that
-
-```rust
-      self.command_pool.take().map(|command_pool| {
-        self.device.destroy_command_pool(command_pool.into_raw());
-      });
-```
-
-But the RenderPass and the Swapchain... we want to destroy them, but we can't
-move them out of the borrowed context. And we want to not have them be wrapped
-in Option since we'll be using them every single frame and it'll be a lot of
-code noise to be dealing with that Option layer.
-
-So...
-
-We'll just do the _hyper unsafe_ thing, and use `replace`. What will go in the
-old position? Just a `zeroed` value. Is that legal? I really don't think so. But
-you can't witness the struct after it's been dropped so you can't actually use
-the zeroed data so... It's probably fine? We'll hope it's fine.
-
-```rust
-      // BIG DANGER HERE, DO NOT DO THIS OUTSIDE OF A DROP
-      use core::mem::{replace, zeroed};
-      self.device.destroy_render_pass(replace(&mut self.render_pass, zeroed()));
-      self.device.destroy_swapchain(replace(&mut self.swapchain, zeroed()));
-```
-
-And now our HalState works with Drop just like anything else.
-
-# Wrapping Up The Example
-
-We're almost home! I promise!
-
-## Picking A Clear Color
-
-To pick a color each frame, first we add a few variables to our pile of locals.
-
-```rust
-  let mut running = true;
-  let (mut frame_width, mut frame_height) = winit_state.window.get_inner_size().map(|logical| logical.into()).unwrap_or((0.0, 0.0));
-  let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
-```
-
-And we make the input gathering a little more interesting
-
-```rust
-  'main_loop: loop {
-    winit_state.events_loop.poll_events(|event| match event {
-      Event::WindowEvent {
-        event: WindowEvent::CloseRequested,
-        ..
-      } => running = false,
-      Event::WindowEvent {
-        event: WindowEvent::Resized(logical),
-        ..
-      } => {
-        frame_width = logical.width;
-        frame_height = logical.height;
-      }
-      Event::WindowEvent {
-        event: WindowEvent::CursorMoved { position, .. },
-        ..
-      } => {
-        mouse_x = position.x;
-        mouse_y = position.y;
-      }
-      _ => (),
-    });
-    if !running {
-      break 'main_loop;
-    }
-```
-
-And then with this data we do _some_ arbitrary thing to pick us a color each
-frame and call the method. We'll use the mouse's X and Y position to generate
-Red and Green channel values for our color.
-
-```rust
-    // This makes a color that changes as the mouse moves, just so that there's
-    // some feedback that we're really drawing a new thing each frame.
-    let r = (mouse_x / frame_width) as f32;
-    let g = (mouse_y / frame_height) as f32;
-    let b = (r + g) * 0.3;
-    let a = 1.0;
-
-    if let Err(e) = hal_state.draw_clear_frame([r, g, b, a]) {
-      error!("Error while drawing a clear frame: {}", e);
-      break 'main_loop;
-    }
-```
-
-## Closing Up Shop
-
-One thing is that before we let the HalState struct drop we have to try and wait
-for all active queues to finish out. Otherwise we'll get all sorts of bad use
-after free stuff.
-
-After whe loop we put
-
-```rust
-  // If we leave the main loop for any reason, we want to shut down as
-  // gracefully as we can.
-  if let Err(e) = hal_state.wait_until_idle() {
-    error!("Error while waiting for the queues to idle: {}", e);
-  }
-```
-
-And inside HalState we make a small helper:
-
-```rust
-  /// Waits until the device goes idle.
-  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
-    self.device.wait_idle()
-  }
-```
-
-And we're done.
-
-## Turn It On
-
-If you turn on the program you should get a black screen that shifts around with
-shades of green and magenta when you move the mouse around.
-
