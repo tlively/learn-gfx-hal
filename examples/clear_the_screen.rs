@@ -37,7 +37,7 @@ pub struct HalState {
   render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
   image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
   command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
-  command_pool: Option<CommandPool<back::Backend, Graphics>>,
+  command_pool: ManuallyDrop<CommandPool<back::Backend, Graphics>>,
   swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
   image_views: Vec<(<back::Backend as Backend>::ImageView)>,
   render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
@@ -254,7 +254,7 @@ impl HalState {
       render_pass: ManuallyDrop::new(render_pass),
       image_views,
       swapchain_framebuffers,
-      command_pool: Some(command_pool),
+      command_pool: ManuallyDrop::new(command_pool),
       command_buffers,
       image_available_semaphores,
       render_finished_semaphores,
@@ -343,9 +343,6 @@ impl core::ops::Drop for HalState {
       for semaphore in self.image_available_semaphores.drain(..) {
         self.device.destroy_semaphore(semaphore)
       }
-      self.command_pool.take().map(|command_pool| {
-        self.device.destroy_command_pool(command_pool.into_raw());
-      });
       for framebuffer in self.swapchain_framebuffers.drain(..) {
         self.device.destroy_framebuffer(framebuffer);
       }
@@ -354,6 +351,9 @@ impl core::ops::Drop for HalState {
       }
       // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
       use core::ptr::read;
+      self
+        .device
+        .destroy_command_pool(ManuallyDrop::into_inner(read(&mut self.command_pool)).into_raw());
       self
         .device
         .destroy_render_pass(ManuallyDrop::into_inner(read(&mut self.render_pass)));

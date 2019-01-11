@@ -4,11 +4,14 @@ sudo: false
 cache:
   cargo
 
-rust:
+rust: 
   - stable
   - beta
+  - nightly
+
+matrix:
   allow_failures:
-    - nightly
+   - rust: nightly
 
 before_script:
   - (test -x $HOME/.cargo/bin/cargo-install-update || cargo install cargo-update)
