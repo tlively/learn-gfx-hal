@@ -351,7 +351,9 @@ validation errors when `debug_assertions` are on. You don't need to do any
 special setup, it just conveniently happens for you.
 
 Unfortunately, when testing with other backends you're much more "on your own",
-but some help is still better than zero help.
+but some help is still better than zero help. You can set up Metal validation,
+and I'll update here just as soon as one of the gfx team members with a mac
+updates me on what to say.
 
 ## Adding In `gfx-hal` And A Backend
 
@@ -521,12 +523,11 @@ like I said at the top: if the `gfx-hal` docs aren't clear on their semantics,
 you can usually assume that Vulkan semantics apply.
 
 * We `submit` a `Submission` into the `CommandQueue`. Instead of giving a count
-  and a pointer to an array of "VkSubmitInto", we give a single `Submission`,
+  and a pointer to an array of "VkSubmitInfo", we give a single `Submission`,
   which is itself composed of `IntoIterator` things that I assume get iterated
-  over. I don't know why it's flipped around like that instead of just having us
-  pass in a `&[SubmissionInfo]`, which would be the closest to Vulkan. Probably
-  some other backend forced a divergence. Even that explanation doesn't make
-  sense, this function should just be accepting a slice. Oh well.
+  over. _Unfortunately_, since each backend has to handle the info in slightly
+  different ways, we have to pay for that cross-platform benefit by things
+  sometimes being a little less clear on our end.
 * We optionally give a "fence" which gets "signalled" once all of the submitted
   command buffers have completed execution. We'll talk about that in a moment.
 
@@ -1375,13 +1376,14 @@ let render_pass = {
 
 ## Targets For Rendering
 
-We've got all these images, but we can't use them as it is. Vulkan wants to know 
+We've got all these images, but we can't use them as it is. Vulkan wants to know
+more because it wants all the memory for each step to be as perfectly laid out
+as possible.
 
 ### ImageView
 
-We can't use our images directly. We have to take the Images (in the Backbuffer)
-and then make one ImageView each. This adds metadata to each image on how we're
-using it.
+First we have to take the Images (in the Backbuffer) and then make one ImageView
+each. This adds the metadata to each image on how we're using it.
 
 There's not too much to say about the process here. The Backbuffer technically
 can hold two possible setups, one of which is for OpenGL and the other of which
@@ -1434,7 +1436,8 @@ let image_views: Vec<_> = match backbuffer {
 Once we've got our ImageView values set, we can get one Framebuffer for each
 with
 [Device::create_framebuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_framebuffer).
-This is what we actually target with our CommandBuffer recordings. It's another quick map operation, even less to say than with the ImageViews.
+This is what we actually target with our CommandBuffer recordings. It's another
+quick map operation, even less to say than with the ImageViews.
 
 ```rust
 let framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
@@ -1488,8 +1491,8 @@ let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_c
 
 ### current_frame
 
-I guess you could sat that this is part of the command issuing maybe? I don't
-know but we've been initializing for a super long time and I'm getting sick of
+I guess you could say that this is part of the command issuing maybe? I don't
+know, but we've been initializing for a super long time and I'm getting sick of
 it, so you probably are too. This value is just a `usize` tracking what set of
 stuff to use, and it starts at 0.
 
