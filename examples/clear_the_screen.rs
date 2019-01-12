@@ -16,7 +16,6 @@ use gfx_hal::{
   adapter::{Adapter, PhysicalDevice},
   command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
-  error::HostExecutionError,
   format::{Aspects, ChannelType, Format, Swizzle},
   image::{Extent, Layout, SubresourceRange, Usage, ViewKind},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, SubpassDesc},
@@ -50,6 +49,7 @@ pub struct HalState {
   _instance: ManuallyDrop<back::Instance>,
 }
 impl HalState {
+  /// Creates a new, fully initialized HalState.
   pub fn new(window: &Window) -> Result<Self, &'static str> {
     // Create An Instance
     let instance = back::Instance::create(WINDOW_NAME, 1);
@@ -64,7 +64,7 @@ impl HalState {
       .find(|a| {
         a.queue_families
           .iter()
-          .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+          .any(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
       })
       .ok_or("Couldn't find a graphical Adapter!")?;
 
@@ -73,7 +73,7 @@ impl HalState {
       let queue_family = adapter
         .queue_families
         .iter()
-        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+        .find(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
         .ok_or("Couldn't find a QueueFamily with graphics!")?;
       let Gpu { device, mut queues } = unsafe {
         adapter
@@ -330,16 +330,12 @@ impl HalState {
         .map_err(|_| "Failed to present into the swapchain!")
     }
   }
-
-  /// Waits until the device goes idle.
-  pub fn wait_until_idle(&self) -> Result<(), HostExecutionError> {
-    self.device.wait_idle()
-  }
 }
 impl core::ops::Drop for HalState {
   /// We have to clean up "leaf" elements before "root" elements. Basically, we
   /// clean up in reverse of the order that we created things.
   fn drop(&mut self) {
+    let _ = self.device.wait_idle();
     unsafe {
       for fence in self.in_flight_fences.drain(..) {
         self.device.destroy_fence(fence)
@@ -409,6 +405,66 @@ impl Default for WinitState {
   }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UserInput {
+  pub end_requested: bool,
+  pub new_frame_size: Option<(f64, f64)>,
+  pub new_mouse_position: Option<(f64, f64)>,
+}
+impl UserInput {
+  pub fn poll_events_loop(events_loop: &mut EventsLoop) -> Self {
+    let mut output = UserInput::default();
+    events_loop.poll_events(|event| match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => output.end_requested = true,
+      Event::WindowEvent {
+        event: WindowEvent::Resized(logical),
+        ..
+      } => {
+        output.new_frame_size = Some((logical.width, logical.height));
+      }
+      Event::WindowEvent {
+        event: WindowEvent::CursorMoved { position, .. },
+        ..
+      } => {
+        output.new_mouse_position = Some((position.x, position.y));
+      }
+      _ => (),
+    });
+    output
+  }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LocalState {
+  pub frame_width: f64,
+  pub frame_height: f64,
+  pub mouse_x: f64,
+  pub mouse_y: f64,
+}
+impl LocalState {
+  pub fn update_from_input(&mut self, input: UserInput) {
+    if let Some(frame_size) = input.new_frame_size {
+      self.frame_width = frame_size.0;
+      self.frame_height = frame_size.1;
+    }
+    if let Some(position) = input.new_mouse_position {
+      self.mouse_x = position.0;
+      self.mouse_y = position.1;
+    }
+  }
+}
+
+fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(), &'static str> {
+  let r = (local_state.mouse_x / local_state.frame_width) as f32;
+  let g = (local_state.mouse_y / local_state.frame_height) as f32;
+  let b = (r + g) * 0.3;
+  let a = 1.0;
+  hal_state.draw_clear_frame([r, g, b, a])
+}
+
 fn main() {
   simple_logger::init().unwrap();
 
@@ -419,56 +475,27 @@ fn main() {
     Err(e) => panic!(e),
   };
 
-  let mut running = true;
-  let (mut frame_width, mut frame_height) = winit_state
+  let (frame_width, frame_height) = winit_state
     .window
     .get_inner_size()
     .map(|logical| logical.into())
     .unwrap_or((0.0, 0.0));
-  let (mut mouse_x, mut mouse_y) = (0.0, 0.0);
+  let mut local_state = LocalState {
+    frame_width,
+    frame_height,
+    mouse_x: 0.0,
+    mouse_y: 0.0,
+  };
 
-  'main_loop: loop {
-    winit_state.events_loop.poll_events(|event| match event {
-      Event::WindowEvent {
-        event: WindowEvent::CloseRequested,
-        ..
-      } => running = false,
-      Event::WindowEvent {
-        event: WindowEvent::Resized(logical),
-        ..
-      } => {
-        frame_width = logical.width;
-        frame_height = logical.height;
-      }
-      Event::WindowEvent {
-        event: WindowEvent::CursorMoved { position, .. },
-        ..
-      } => {
-        mouse_x = position.x;
-        mouse_y = position.y;
-      }
-      _ => (),
-    });
-    if !running {
-      break 'main_loop;
+  loop {
+    let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
+    if inputs.end_requested {
+      break;
     }
-
-    // This makes a color that changes as the mouse moves, just so that there's
-    // some feedback that we're really drawing a new thing each frame.
-    let r = (mouse_x / frame_width) as f32;
-    let g = (mouse_y / frame_height) as f32;
-    let b = (r + g) * 0.3;
-    let a = 1.0;
-
-    if let Err(e) = hal_state.draw_clear_frame([r, g, b, a]) {
-      error!("Error while drawing a clear frame: {}", e);
-      break 'main_loop;
+    local_state.update_from_input(inputs);
+    if let Err(e) = do_the_render(&mut hal_state, &local_state) {
+      error!("Rendering Error: {:?}", e);
+      break;
     }
-  }
-
-  // If we leave the main loop for any reason, we want to shut down as
-  // gracefully as we can.
-  if let Err(e) = hal_state.wait_until_idle() {
-    error!("Error while waiting for the queues to idle: {}", e);
   }
 }

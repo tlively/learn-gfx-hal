@@ -219,7 +219,7 @@ fn main(){
   let hal_state = HalState::new(&winit_state.window);
   let mut local_state = LocalState::default();
   loop {
-    let inputs = UserInput::poll_events_loop(&mut winit_state.event_loop);
+    let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
     if inputs.end_requested {
       break;
     }
@@ -899,6 +899,7 @@ on. We'll even add some names to the build phases to help group it mentally:
   * device (requires an Adapter)
 * The GPU Swapchain
   * swapchain (requires a Surface+Adapter+Device)
+  * backbuffer (requires Surface+Adapter)
   * render_area (comes from the Swapchain)
   * frames_in_flight (comes from the Swapchain)
   * fences (requires a Device + frames_in_flight)
@@ -906,7 +907,6 @@ on. We'll even add some names to the build phases to help group it mentally:
 * RenderPass
   * render_pass (requires a Device + Swapchain format)
 * Targets For Rendering
-  * backbuffer (requires Surface+Adapter)
   * image_views (requires a Device+Backbuffer)
   * framebuffers (requires ImageView values)
 * Command Issuing
@@ -996,14 +996,7 @@ We have to call
 which gives a vector of things to pick from. Our criteria here is based on the `queue_families: Vec<B::QueueFamily>` that each Adapter has. We want a QueueFamily
 
 1) That supports Graphics
-2) That has at least one queue available
 3) That our Surface supports
-
-Now that 2nd rule is probably a pointless check, since in Vulkan you need at
-least 1 queue by the spec, and even in the other backends it doesn't make much
-sense to offer a QueueFamily with no queues available, but _we'll check anyway_,
-because you can afford to pay a little extra for checks you don't expect you
-need when you're doing the startup code.
 
 Since we're going over a vector, we can use some fancy Iterator stuff
 
@@ -1014,7 +1007,7 @@ let adapter = instance
   .find(|a| {
     a.queue_families
       .iter()
-      .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+      .any(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
   })
   .ok_or("Couldn't find a graphical Adapter!")?;
 ```
@@ -1053,7 +1046,7 @@ let (device, queue_group) = {
   let queue_family = adapter
     .queue_families
     .iter()
-    .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+    .find(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
     .ok_or("Couldn't find a QueueFamily with graphics!")?;
   let Gpu { device, mut queues } = unsafe {
     adapter
@@ -1197,8 +1190,8 @@ pub struct SwapchainConfig {
   stuff. We'll be using just color for now, so we check for that.
 
 With that all done, we make the SwapchainConfig and then we use the Device to
-build a Swapchain and Backbuffer pair. This is a very vertical portion, but not
-too much is actually happening.
+build a Swapchain and Backbuffer pair. This is a very vertical portion of code,
+but not too much is actually happening.
 
 ```rust
 let (swapchain, extent, backbuffer, format, frames_in_flight) = {
@@ -1305,9 +1298,15 @@ let (image_available_semaphores, render_finished_semaphores, in_flight_fences) =
 
 ## RenderPass
 
-A RenderPass describes a whole lot of things. It has a backend specific
-definition so there's no general struct here, not even a trait for them,
-unfortunately. Instead, you make one with
+A RenderPass describes each part of the whole graphical processing for an image.
+Well, actually it describes one "pass" which has various "sub-passes", but you
+can also do multi-pass rendering, and then each pass can have its own
+sub-passes. It's a lot of organization you might need to keep track of, but it
+lets you be very precise about what happens when.
+
+The RenderPass type has a backend specific definition so there's no general
+struct here, not even a trait for them, unfortunately. Instead, you make one
+with
 [Device::create_render_pass](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_render_pass).
 This works a lot like that Submission stuff we had to deal with before, where
 we'll have lists of stuff that all kinda get piled together. We need one
@@ -1374,24 +1373,401 @@ let render_pass = {
 };
 ```
 
-### render_pass (requires a Device)
-
 ## Targets For Rendering
-### backbuffer (requires Surface+Adapter)
-### image_views (requires a Device+Backbuffer)
-### framebuffers (requires ImageView values)
+
+We've got all these images, but we can't use them as it is. Vulkan wants to know 
+
+### ImageView
+
+We can't use our images directly. We have to take the Images (in the Backbuffer)
+and then make one ImageView each. This adds metadata to each image on how we're
+using it.
+
+There's not too much to say about the process here. The Backbuffer technically
+can hold two possible setups, one of which is for OpenGL and the other of which
+is for everything else. It throws a bit of a wrench into our plans to support
+the OpenGL setup so... well we just won't do it for now. After that's settled
+it's just a simple map operation where we call
+[Device::create_image_view](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_image_view)
+a bunch and collect it all up.
+
+We've seen some of this before.
+
+* [ViewKind](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/enum.ViewKind.html)
+  lets us pick that we want this ImageView to be a 2D image, which is already
+  enough of a heads up to know that an "Image" can get pretty weird the farther
+  we go into this and the more types of ViewKind we eventually use.
+* [Swizzle](https://docs.rs/gfx-hal/0.1.0/gfx_hal/format/struct.Swizzle.html)
+  gives you the ability to transition between two different color channel
+  orderings, but we have no need for that now so we can use the `NO` constant.
+* [SubresourceRange](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/struct.SubresourceRange.html)
+  lets us pick what sub-resources (eg: Color / Depth / Stencil) are used at what
+  mipmap levels (think "zoom levels"), and in what parts of the array (if our
+  image is an array, which it's not).
+
+```rust
+let image_views: Vec<_> = match backbuffer {
+  Backbuffer::Images(images) => images
+    .into_iter()
+    .map(|image| unsafe {
+      device
+        .create_image_view(
+          &image,
+          ViewKind::D2,
+          format,
+          Swizzle::NO,
+          SubresourceRange {
+            aspects: Aspects::COLOR,
+            levels: 0..1,
+            layers: 0..1,
+          },
+        )
+        .map_err(|_| "Couldn't create the image_view for the image!")
+    })
+    .collect::<Result<Vec<_>, &str>>()?,
+  Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
+};
+```
+
+### Framebuffer
+
+Once we've got our ImageView values set, we can get one Framebuffer for each
+with
+[Device::create_framebuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_framebuffer).
+This is what we actually target with our CommandBuffer recordings. It's another quick map operation, even less to say than with the ImageViews.
+
+```rust
+let framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
+  image_views
+    .iter()
+    .map(|image_view| unsafe {
+      device
+        .create_framebuffer(
+          &render_pass,
+          vec![image_view],
+          Extent {
+            width: extent.width as u32,
+            height: extent.height as u32,
+            depth: 1,
+          },
+        )
+        .map_err(|_| "Failed to create a framebuffer!")
+    })
+    .collect::<Result<Vec<_>, &str>>()?
+};
+```
+
+There's a use of `vec!` in there that we _could_ avoid with the same ArrayVec
+deal that we used before, but this is startup code so we don't quite need to
+bother. We'll only have 2 or 3 framebuffers anyway, it's fine.
 
 ## Command Issuing
-### Command Pool (requires Device)
-### command_buffers (requires a CommandPool + Swapchain)
 
-## Misc
-### current_frame (just starts at 0)
+We're in the home stretch, we just need to initialize the ability to issue
+commands so we can put all these other things into use.
+
+It's so simple we won't even use sub-sections:
+
+```rust
+let mut command_pool = unsafe {
+  device
+    .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::RESET_INDIVIDUAL)
+    .map_err(|_| "Could not create the raw command pool!")?
+};
+```
+
+The `RESET_INDIVIDUAL` flag lets us reset individual command buffers that come
+out of this pool (without the flag you have to reset the whole pool at once).
+
+Once we have a CommandPool we make it give us one CommandBuffer for each
+Framebuffer that we ended up with.
+
+```rust
+let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
+```
+
+### current_frame
+
+I guess you could sat that this is part of the command issuing maybe? I don't
+know but we've been initializing for a super long time and I'm getting sick of
+it, so you probably are too. This value is just a `usize` tracking what set of
+stuff to use, and it starts at 0.
 
 # Cleaning Up `HalState`
 
-.
+There's two situations where we'd need to clean up the `HalState` stuff:
 
-# Input And LocalState
+* Drop triggering, for any reason: Easy to do, we'll show that in a moment, once
+  we've talked about this other situation we have to handle
+* `new` returning before the `HalState` struct is actually declared (which means
+  that `HalState::drop` doesn't get called): Very un-ergonomic to handle
+  properly. Like, seriously it's bad. You could re-arrange all of the code so
+  that _every single_ early return (the `?` parts) is actually resource safe,
+  but we're totally not even going to do that. It's just too terrible to try.
+  Every single potential early return would create a new indentation for the
+  main code and a custom cleanup block we'd have to write in the error case. I
+  don't even want to think about it.
 
-.
+Why so? Well, almost none of the resource types are self-destructing, so even
+though an early return causes them to die [in the proper
+order](https://github.com/rust-lang/rfcs/blob/master/text/1857-stabilize-drop-order.md)
+(that is, we _always_ want LIFO destruction), their moment of destruction
+doesn't actually _do_ anything because they don't have their own Drop code.
+_This isn't anyone's fault_. I know in a few spots I've taken a few jabs at the
+gfx team for using Range instead of RangeInclusive or something like that, but
+this one they really can't fix.
+
+Anything that comes from `Device::create_foo` needs to be destroyed by calling
+`Device::destroy_foo` using that same device. So, either we need to have a
+globally set Device value so that anyone's drop code can call `destroy_*` at any
+time (rather bad to have such a global), or every single thing to later be
+destroyed has to carry with it a copy of the Device so that they can use it to
+destroy themselves (arguably worse in terms of overhead). It's just... it's just
+not a good situation at all. We'll just have to be aware that our HalState
+initialization code is just fundamentally broken for early returns, and it
+probably always will be.
+
+What are the _consequences_ for any kind of improper resource destruction like
+that? Well, it depends. Which is terrible to have to say, but it does. _Usually_
+you get a resource leak but life goes on as long as everything that comes out of
+your Instance goes away before your Instance does. If you try to destroy the
+Instance before things that came out of it you'll (probably) segfault your
+process on the Vulkan backend. DX12 doesn't seem to mind. I don't know about
+Metal since I don't own a mac.
+
+I feel about as bad for being so vague about it as you probably feel for having
+to read it, but these are just the troubles with FFI.
+
+### Waiting Until Idle
+
+The first thing we do in the drop method is wait for the device to go idle. It's
+not legal to destroy resources that are in use, so we just give it a moment to
+cool down by calling
+[Device::wait_idle](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.wait_idle).
+This could technically error, but at this point we're tearing it all down so we
+don't care about the error. The device had its chance and now we're in charge.
+
+### Basic Destruction
+
+As I said, anything that comes from `Device::create_foo` needs to go back to a
+`Device::destroy_foo` call. If those things are stored in vectors, it's easy to
+drain out the vector and destroy them one at a time.
+
+```rust
+impl core::ops::Drop for HalState {
+  /// We have to clean up "leaf" elements before "root" elements. Basically, we
+  /// clean up in reverse of the order that we created things.
+  fn drop(&mut self) {
+    let _ = self.device.wait_idle();
+    unsafe {
+      for fence in self.in_flight_fences.drain(..) {
+        self.device.destroy_fence(fence)
+      }
+```
+
+And so on, for all of the things that are stored in vectors.
+
+### ManuallyDrop
+
+What do we do about things that aren't stored in vectors? We need to pass them
+to `destroy_foo` but that's by-value and we can't move them out of a borrowed
+context (since we're using `&mut self` within the `drop` call).
+
+The answer is that we cheat.
+
+If we just use
+[core::ptr::read](https://doc.rust-lang.org/core/ptr/fn.read.html) we can make a
+duplicate of any bits we want. The type doesn't even have to be Clone! It's as
+unsafe as it sounds. How do we offset some of that? With a marker struct called
+[ManuallyDrop](https://doc.rust-lang.org/core/mem/struct.ManuallyDrop.html),
+which is magically known to the compiler, and the thing inside of the
+ManuallyDrop will never run its own destructor automatically. When it's really
+time to destroy the thing we can call `ManuallyDrop::into_inner` to unwrap the
+value and pass it to some destroy function, or we can call `ManuallyDrop::drop`
+to force the drop to happen on something that we don't have ownership of. We're
+actually going to use _both_ styles.
+
+For things that go with a `destroy_foo` method we'll use the `::into_inner`
+style:
+
+```rust
+// The CommandPool must also be unwrapped into a RawCommandPool,
+// so there's an extra `into_raw` call here.
+self
+  .device
+  .destroy_command_pool(ManuallyDrop::into_inner(read(&mut self.command_pool)).into_raw());
+self
+  .device
+  .destroy_render_pass(ManuallyDrop::into_inner(read(&mut self.render_pass)));
+self
+  .device
+  .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
+```
+
+And for our two final items we just use the `ManuallyDrop::drop` style:
+
+```rust
+ManuallyDrop::drop(&mut self.device);
+ManuallyDrop::drop(&mut self._instance);
+```
+
+# Final `HalState` Definition
+
+Now that we know all of the fields that we have, including which ones are
+wrapped in `ManuallyDrop`, we can look at our crazy, ugly, horrible `HalState`:
+
+```rust
+pub struct HalState {
+  current_frame: usize,
+  frames_in_flight: usize,
+  in_flight_fences: Vec<<back::Backend as Backend>::Fence>,
+  render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
+  command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
+  command_pool: ManuallyDrop<CommandPool<back::Backend, Graphics>>,
+  framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
+  image_views: Vec<(<back::Backend as Backend>::ImageView)>,
+  render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
+  render_area: Rect,
+  queue_group: QueueGroup<back::Backend, Graphics>,
+  swapchain: ManuallyDrop<<back::Backend as Backend>::Swapchain>,
+  device: ManuallyDrop<back::Device>,
+  _adapter: Adapter<back::Backend>,
+  _surface: <back::Backend as Backend>::Surface,
+  _instance: ManuallyDrop<back::Instance>,
+}
+```
+
+# Everything Else
+
+Now we just fill in those final bits that aren't the `HalState` materials.
+
+## `UserInput`
+
+For input, we'll just track a few of the possible things:
+
+* If a close was requested.
+* The frame's new size (if any).
+* The mouse's new position (if any).
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct UserInput {
+  pub end_requested: bool,
+  pub new_frame_size: Option<(f64, f64)>,
+  pub new_mouse_position: Option<(f64, f64)>,
+}
+impl UserInput {
+  pub fn poll_events_loop(events_loop: &mut EventsLoop) -> Self {
+    let mut output = UserInput::default();
+    events_loop.poll_events(|event| match event {
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => output.end_requested = true,
+      Event::WindowEvent {
+        event: WindowEvent::Resized(logical),
+        ..
+      } => {
+        output.new_frame_size = Some((logical.width, logical.height));
+      }
+      Event::WindowEvent {
+        event: WindowEvent::CursorMoved { position, .. },
+        ..
+      } => {
+        output.new_mouse_position = Some((position.x, position.y));
+      }
+      _ => (),
+    });
+    output
+  }
+}
+```
+
+## `LocalState`
+
+Currently, the locals are just the user input, minus the bool for if the user is
+trying to quit. We'll get plenty more locals later.
+
+```rust
+#[derive(Debug, Clone, Copy, Default)]
+pub struct LocalState {
+  pub frame_width: f64,
+  pub frame_height: f64,
+  pub mouse_x: f64,
+  pub mouse_y: f64,
+}
+impl LocalState {
+  pub fn update_from_input(&mut self, input: UserInput) {
+    if let Some(frame_size) = input.new_frame_size {
+      self.frame_width = frame_size.0;
+      self.frame_height = frame_size.1;
+    }
+    if let Some(position) = input.new_mouse_position {
+      self.mouse_x = position.0;
+      self.mouse_y = position.1;
+    }
+  }
+}
+```
+
+## `do_the_render`
+
+This part is easy right now. We just make up some arbitrary color and clear the
+screen to that. We'll use the mouse's position as a fraction of the total frame
+size, so that the color shifts as the mouse moves. It's some sort of feedback at
+least.
+
+```rust
+fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(), &'static str> {
+  let r = (local_state.mouse_x / local_state.frame_width) as f32;
+  let g = (local_state.mouse_y / local_state.frame_height) as f32;
+  let b = (r + g) * 0.3;
+  let a = 1.0;
+  hal_state.draw_clear_frame([r, g, b, a])
+}
+```
+
+## `main`
+
+Now we put it all together, and we get a final form that's pleasantly similar to
+what our initial goal looked like.
+
+```rust
+fn main() {
+  simple_logger::init().unwrap();
+
+  let mut winit_state = WinitState::default();
+
+  let mut hal_state = match HalState::new(&winit_state.window) {
+    Ok(state) => state,
+    Err(e) => panic!(e),
+  };
+
+  let (frame_width, frame_height) = winit_state
+    .window
+    .get_inner_size()
+    .map(|logical| logical.into())
+    .unwrap_or((0.0, 0.0));
+  let mut local_state = LocalState {
+    frame_width,
+    frame_height,
+    mouse_x: 0.0,
+    mouse_y: 0.0,
+  };
+
+  loop {
+    let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
+    if inputs.end_requested {
+      break;
+    }
+    local_state.update_from_input(inputs);
+    if let Err(e) = do_the_render(&mut hal_state, &local_state) {
+      error!("Rendering Error: {:?}", e);
+      break;
+    }
+  }
+}
+```
+
+You can find the full code file in the `examples/` directory of the repo.
