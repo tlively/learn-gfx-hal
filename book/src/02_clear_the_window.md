@@ -741,7 +741,7 @@ Which records a render pass with no secondary command buffers.
 
 Next we... immediately finish the render pass. The RenderPass struct will define
 how to deal with the color buffer, including the clear effect, and the
-ClearValue picks what color to clear to, so we're already done.
+ClearValue just picks what color to clear to. We're already done.
 
 ```rust
   pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
@@ -1283,9 +1283,97 @@ flight.
 
 ### Fences and Semaphores
 
-TODO
+Generating the Fence and Semaphore values is quite boring. You just call
+`create_fence` and `create_semaphore` on your Device value, over and over until
+you have enough. Technically this might cause an OutOfMemory problem on the GPU,
+but that's not very likely, so there's little chance that we'll have a problem
+in this stage of things.
+
+```rust
+let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
+  let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+  let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+  let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
+  for _ in 0..frames_in_flight {
+    in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
+    image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+    render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+  }
+  (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+};
+```
 
 ## RenderPass
+
+A RenderPass describes a whole lot of things. It has a backend specific
+definition so there's no general struct here, not even a trait for them,
+unfortunately. Instead, you make one with
+[Device::create_render_pass](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_render_pass).
+This works a lot like that Submission stuff we had to deal with before, where
+we'll have lists of stuff that all kinda get piled together. We need one
+[Attachment](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/struct.Attachment.html)
+value (for the color), one
+[SubpassDesc](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/struct.SubpassDesc.html)
+value (remember how we did a single "inline" render pass?), and then naturally
+we have no
+[SubpassDependency](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/struct.SubpassDependency.html)
+values since we only have a single subpass.
+
+* Our Attachment needs
+  * `format`: the format that we picked out for our Swapchain to be using.
+  * `samples`: is only used when you get to multisampling, which is a later lesson.
+  * `ops`: determines what to do with the data in this Attachment at the start
+    of the subpass and at the end of the subpass. Remember how we recorded a
+    command that set a clear color and nothing else? That didn't even do the
+    clearing. _This_ is the part that does the clearing. When the subpass begins
+    the old color value is all cleared. When the subpass ends the color values
+    are stored.
+  * `stencil_ops`: Is something we'll use later, but for now `DONT_CARE` is
+    sufficient. I guess this is one of the few places where we kinda have a
+    default to work with.
+  * `layouts`: This lets us define the starting and ending pixel layout of the
+    image we're processing. Each image has a pixel format which doesn't change
+    from pass to pass, but it also has a layout that does change from pass to
+    pass. It depends on what the image is being used for. In our case it starts
+    as Undefined (since nothing happened before this) and it ends with Present
+    (since we're done and want to present the image). Once again, we're using a
+    Range when the type _should be_ RangeInclusive, or even maybe just a tuple.
+* Our SubpassDesc needs the color attachment, and no others. This is where you
+  _can_ get really fancy with "post-processing effects" type of stuff. We just
+  need one
+  [AttachmentRef](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pass/type.AttachmentRef.html)
+  for our colors. An ID value (0 is fine) and a layout. _During_ this pass we'll
+  be affecting the color, so we'll pick `ColorAttachmentOptimal`. Well, we don't
+  affect the colors after the clear during this tutorial, but once we start
+  drawing stuff it'll matter, so we might as well set it now.
+
+```rust
+let render_pass = {
+  let color_attachment = Attachment {
+    format: Some(format),
+    samples: 1,
+    ops: AttachmentOps {
+      load: AttachmentLoadOp::Clear,
+      store: AttachmentStoreOp::Store,
+    },
+    stencil_ops: AttachmentOps::DONT_CARE,
+    layouts: Layout::Undefined..Layout::Present,
+  };
+  let subpass = SubpassDesc {
+    colors: &[(0, Layout::ColorAttachmentOptimal)],
+    depth_stencil: None,
+    inputs: &[],
+    resolves: &[],
+    preserves: &[],
+  };
+  unsafe {
+    device
+      .create_render_pass(&[color_attachment], &[subpass], &[])
+      .map_err(|_| "Couldn't create a render pass!")?
+  }
+};
+```
+
 ### render_pass (requires a Device)
 
 ## Targets For Rendering

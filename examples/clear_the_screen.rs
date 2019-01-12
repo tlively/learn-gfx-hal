@@ -158,6 +158,19 @@ impl HalState {
       (swapchain, extent, backbuffer, format, image_count as usize)
     };
 
+    // Create Our Sync Primitives
+    let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
+      let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+      let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
+      let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
+      for _ in 0..frames_in_flight {
+        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
+        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+      }
+      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+    };
+
     // Define A RenderPass
     let render_pass = {
       let color_attachment = Attachment {
@@ -236,19 +249,6 @@ impl HalState {
 
     // Create Our CommandBuffers
     let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
-
-    // Create Our Sync Primitives
-    let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
-      let mut image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-      let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
-      let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
-      for _ in 0..command_buffers.len() {
-        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
-        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
-        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
-      }
-      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
-    };
 
     Ok(Self {
       _instance: ManuallyDrop::new(instance),
