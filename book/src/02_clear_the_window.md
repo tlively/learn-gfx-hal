@@ -469,6 +469,16 @@ focus on our core goal, then we'll see what we need for that, and then we'll see
 what we need for _that_, until eventually we stop needing to have already done
 something else.
 
+We'll be filling in this method:
+
+```rust
+impl HalState {
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str> {
+    unimplemented!()
+  }
+}
+```
+
 ## CommandQueue
 
 The heart of it all is that we want to be able to safely call
@@ -511,13 +521,14 @@ like I said at the top: if the `gfx-hal` docs aren't clear on their semantics,
 you can usually assume that Vulkan semantics apply.
 
 * We `submit` a `Submission` into the `CommandQueue`. Instead of giving a count
-  ans a pointer to an array of "VkSubmitInto", we give a single `Submission`,
+  and a pointer to an array of "VkSubmitInto", we give a single `Submission`,
   which is itself composed of `IntoIterator` things that I assume get iterated
   over. I don't know why it's flipped around like that instead of just having us
   pass in a `&[SubmissionInfo]`, which would be the closest to Vulkan. Probably
-  some other backend forced a divergence.
+  some other backend forced a divergence. Even that explanation doesn't make
+  sense, this function should just be accepting a slice. Oh well.
 * We optionally give a "fence" which gets "signalled" once all of the submitted
-  command buffers have completed execution.
+  command buffers have completed execution. We'll talk about that in a moment.
 
 ### `present`
 
@@ -573,9 +584,9 @@ GPU will signal the fence when it's done whatever it's supposed to have done.
 
 A [semaphore](https://en.wikipedia.org/wiki/Semaphore_(programming)) (aka
 [VkSemaphore](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkSemaphore.html))
-is the other synchronization primitive. In some contexts a semaphore can be any
-integer value, but in a Vulkan / `gfx-hal` context they can only be "signaled"
-or "unsignaled".
+is the other synchronization primitive that we deal with. In some contexts (eg:
+`winapi`) a semaphore can be any integer value, but in a Vulkan / `gfx-hal`
+context they can only be "signaled" or "unsignaled".
 
 The big difference between a fence and a semaphore is that semaphores are for
 GPU to GPU synchronization. When once part of a graphics pipeline (such as
@@ -620,7 +631,7 @@ pub struct Submission {
 * `command_buffers` is our
   [Submittable](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/trait.Submittable.html)
   things, which are `Borrow<B::CommandBuffer>`, so we can think of that as being
-  "sorta like &CommandBuffer".
+  _sorta_ like `&[CommandBuffer]`.
 * `wait_semaphores` gives the semaphores that this submission has to _wait on
   before it starts_. Each semaphore is paired with a
   [PipelineStage](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pso/struct.PipelineStage.html),
@@ -692,11 +703,12 @@ All we want to do is clear the screen, that's got to be easy enough.
 
 Well, it turns out that a CommandBuffer isn't totally free to make, so we want
 to make them ahead of time and then pick out and use a particular command buffer
-each frame. Also, we want to grab a `&mut` to the particular command buffer when
-recording it, and then we'll also need a `&` to it when we get it to the
-submission, so that calls for the ever-lovable inner scope. Thankfully, in a
-sense, recording to a CommandBuffer is all unsafe, so we can kill two birds with
-one stone.
+each frame. That's easy, we can change our Submission declaration very easily.
+Also, before it's part of the Submission, we want to grab a `&mut` to the
+particular command buffer and write to it. That calls for the ever-lovable
+"inner scope" so that the `&mut` goes away and we can take a `&` to our buffer
+instead. Thankfully (I guess), recording to a CommandBuffer is all unsafe, so
+we can kill two birds with one stone.
 
 A CommandBuffer is actually wrapping around a
 [RawCommandBuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/trait.RawCommandBuffer.html)
@@ -757,7 +769,7 @@ ClearValue picks what color to clear to, so we're already done.
 
 ## Frame Setup
 
-What's left to so as setup? Well, the GPU can be doing more than one of these
+What's left to do as setup? Well, the GPU can be doing more than one of these
 buffer things at once. When you've got several images all going on it's called
 having frames "in flight". At the start of each frame of work, we have to pick
 the right fences and semaphores and all that for the current frame that we're
@@ -819,7 +831,7 @@ clear.
       buffer.begin(false);
       buffer.begin_render_pass_inline(
         &self.render_pass,
-        &self.swapchain_framebuffers[i_usize],
+        &self.framebuffers[i_usize],
         self.render_area,
         clear_values.iter(),
       );
@@ -853,12 +865,12 @@ clear.
 So for our `draw_clear_frame` method to work it expects that we have many things
 on hand as part of `HalState`. Listing them in the order that they're used:
 
-* fences (requires a Device)
-* semaphores (requires a Device)
+* fences (requires a Device + frames_in_flight)
+* semaphores (requires a Device + frames_in_flight)
 * current_frame (just starts at 0)
 * frames_in_flight (comes from the Swapchain)
 * device (requires an Adapter)
-* swapchain (requires a Surface)
+* swapchain (requires a Surface+Adapter+Device)
 * command_buffers (requires a CommandPool)
 * render_pass (requires a Device)
 * swapchain_framebuffers (requires ImageView values)
@@ -869,17 +881,424 @@ But, as you can probably guess, that's _not_ the order that they're initialized.
 You should have noticed that there's some things on there we haven't even
 discussed yet, which also have their requirements. In no particular order:
 
-* image_views (requires a Backbuffer)
-* backbuffer (requires a Surface)
-* Command Pool (requires a Device)
-* Surface (requires a Window)
+* image_views (requires a Device+Backbuffer)
+* backbuffer (requires Surface+Adapter)
+* Command Pool (requires Device)
+* Surface (requires an Instance+Window)
 * Adapter (requires an Instance)
 * Instance
 
-And so we'll have to sort out all of our initialization code so that we can
-build it all up in the correct order.
+Now we just re-order it all so that nothing is built before the parts it depends
+on. We'll even add some names to the build phases to help group it mentally:
+
+* Top Level Stuff
+  * Instance
+  * Surface (requires an Instance+Window)
+  * Adapter (requires an Instance)
+  * queue_group (requires an Adapter)
+  * device (requires an Adapter)
+* The GPU Swapchain
+  * swapchain (requires a Surface+Adapter+Device)
+  * render_area (comes from the Swapchain)
+  * frames_in_flight (comes from the Swapchain)
+  * fences (requires a Device + frames_in_flight)
+  * semaphores (requires a Device + frames_in_flight)
+* RenderPass
+  * render_pass (requires a Device + Swapchain format)
+* Targets For Rendering
+  * backbuffer (requires Surface+Adapter)
+  * image_views (requires a Device+Backbuffer)
+  * framebuffers (requires ImageView values)
+* Command Issuing
+  * Command Pool (requires Device)
+  * command_buffers (requires a CommandPool + Swapchain)
+* Misc
+  * current_frame (just starts at 0)
+
+Notice that after the initial top level stuff you can do the other general
+phases in about any order you want. You use the parts that they each build all
+at once during rendering, but they can be constructed and configured
+independently.
+
+Also, there's many other things that a person might initialize in `gfx-hal`.
+That's why we looked at how to submit the command we wanted first, so we don't
+go wandering off initializing all sorts of things we don't end up needing.
+
+And I guess we can just copy this outline as our outline for the explanation of
+each step too. Nice when things work out like that.
+
+## Top Level Stuff
+
+Alright, so we're going to initialize a `HalState`. Well, just as with drawing,
+there might be any number of problems that come up during this many step
+process.
+
+So the method we're filling in looks like this:
+
+```rust
+impl HalState {
+  pub fn new(window: &Window) -> Result<Self, &'static str> {
+    unimplemented!()
+  }
+}
+```
+
+### Instance
+
+An `Instance` is a backend specific black box. It's the handle that you hold to
+prove that you've activated the backend API, and when it drops the backend tries
+to close down, so you have to hold on to it at the very end and let it go last.
+
+For something so important, you'd imagine that there's a dedicated trait for
+them, and [you'd be
+right](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html). You'd also
+expect that the trait includes a way to create them instead of leaving it up to
+convention, and you'd be wrong.
+
+Still, it's very easy. We give an instance name and a version and the details of
+how that's used depend on the backend.
+
+```rust
+let instance = back::Instance::create(WINDOW_NAME, 1);
+```
+
+### Surface
+
+The [Surface](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Surface.html)
+is an abstraction of how the `Window` (from `winit`) and your `Instance` (from
+your `gfx-backend-whatever`) will actually be able to interact and show
+something on the screen.
+
+Similar to the Instance, it's very important, but also totally boring to create:
+
+```rust
+let mut surface = instance.create_surface(window);
+```
+
+As far as I can tell, it has no special cleanup operation. It probably shouldn't
+outlive the Instance or the Window, but that's just a best guess.
+
+### Adapter
+
+The [Adapter](https://docs.rs/gfx-hal/0.1.0/gfx_hal/adapter/struct.Adapter.html)
+is... _something_ that supports the usage of the API you've got an Instance for.
+It's _probably_ a hardware GPU, but it could technically be a purely software
+implementation.
+
+We actually don't _make_ an Adapter, we pick one that already exists. Once we've
+picked one, we haven't even made any changes to the system. Picking an Adapter
+is like picking a IP address to connect to. It's one step to select the IP
+address you want, and then another step to actually open a connection to that IP
+address (which we'll do in a moment).
+
+We have to call
+[Instance::enumerate_adapters](https://docs.rs/gfx-hal/0.1.0/gfx_hal/trait.Instance.html#tymethod.enumerate_adapters),
+which gives a vector of things to pick from. Our criteria here is based on the `queue_families: Vec<B::QueueFamily>` that each Adapter has. We want a QueueFamily
+
+1) That supports Graphics
+2) That has at least one queue available
+3) That our Surface supports
+
+Now that 2nd rule is probably a pointless check, since in Vulkan you need at
+least 1 queue by the spec, and even in the other backends it doesn't make much
+sense to offer a QueueFamily with no queues available, but _we'll check anyway_,
+because you can afford to pay a little extra for checks you don't expect you
+need when you're doing the startup code.
+
+Since we're going over a vector, we can use some fancy Iterator stuff
+
+```rust
+let adapter = instance
+  .enumerate_adapters()
+  .into_iter()
+  .find(|a| {
+    a.queue_families
+      .iter()
+      .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+  })
+  .ok_or("Couldn't find a graphical Adapter!")?;
+```
+
+### Device and QueueGroup
+
+This is a "two things in one step" situation. From here on out we'll be doing a
+lot of steps where we have an inner scope do to some setup, then we pass the
+important data back up to the `new` method's primary scope. It's a Rust take on
+what you might call "[Style
+C](http://number-none.com/blow/blog/programming/2014/09/26/carmack-on-inlined-code.html)"
+coding. We're just going to let the method get super long, with every single
+step being as plan and obvious as possible, to see the full horror of what we're
+doing.
+
+The actual process here is easy enough to understand.
+
+* Every Adapter has a
+  [PhysicalDevice](https://docs.rs/gfx-hal/0.1.0/gfx_hal/adapter/trait.PhysicalDevice.html),
+  and you call `open` to actually "connect" your program to that PhysicalDevice.
+  This (hopefully) gives a Gpu. You have to pass in a list of QueueFamily values
+  with a priority for each one.
+* A [Gpu](https://docs.rs/gfx-hal/0.1.0/gfx_hal/struct.Gpu.html) is a pairing of
+  a [Device](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html)
+  (which is a logical device, but you use it so often they wanted to make the
+  name shorter) and a
+  [Queues](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/family/struct.Queues.html)
+  value, which is a container for the different queues that we can now use.
+* Once we've got the Queues, we pull out a particular
+  [QueueGroup](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/family/struct.QueueGroup.html)
+  as well, which we use much later to build the CommandPool, and also it's how
+  we `submit` our written CommandBuffer values of course.
+
+```rust
+let (device, queue_group) = {
+  let queue_family = adapter
+    .queue_families
+    .iter()
+    .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+    .ok_or("Couldn't find a QueueFamily with graphics!")?;
+  let Gpu { device, mut queues } = unsafe {
+    adapter
+      .physical_device
+      .open(&[(&queue_family, &[1.0; 1])])
+      .map_err(|_| "Couldn't open the PhysicalDevice!")?
+  };
+  let queue_group = queues
+    .take::<Graphics>(queue_family.id())
+    .ok_or("Couldn't take ownership of the QueueGroup!")?;
+  let _ = if queue_group.queues.len() > 0 {
+    Ok(())
+  } else {
+    Err("The QueueGroup did not have any CommandQueues available!")
+  }?;
+  (device, queue_group)
+};
+```
+
+Now, I can already _hear_ you trying to tell me that we shouldn't repeat the
+`find` operation, but because of how the lifetimes work out we can't hang on to
+a `queue_family` and also use our Adapter normally because the QueueFamily
+reference keeps the Adapter borrowed the whole time, and it's a mess. **Even
+if** we didn't care about lifetime issues the two `find` operations are actually
+different because one works on `&` and the other is working on `&&` and we just
+don't happen to _see_ the difference because of [Deref
+coercion](https://doc.rust-lang.org/book/ch15-02-deref.html?highlight=deref#implicit-deref-coercions-with-functions-and-methods).
+It's fine to just do it twice, don't worry too much about it, really.
+
+## The GPU Swapchain
+
+The
+[Swapchain](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Swapchain.html)
+is like a collection of images on the GPU. They've got a linear index, like an
+array or vector, and the GPU jumps around the Swapchain showing one image at any
+given moment. This is where things start to get more configurable.
+
+### Swapchain and friends
+
+The basic idea is that you call
+[Surface::compatibility](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Surface.html#tymethod.compatibility)
+to get information about what sort of
+[SwapchainConfig](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/struct.SwapchainConfig.html)
+you're allowed to build, and then you call
+[Device::create_swapchain](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_swapchain)
+with your Surface and the config you want. This gives you a Swapchain, which has
+methods for controlling the GPU's swapchain, as well as a
+[Backbuffer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/enum.Backbuffer.html),
+which holds the handles to particular Image data. We use an Image to make an
+ImageView, and we use that to make a Framebuffer, and _that's_ what we're
+manipulating with the CommandBuffer.
+
+So what SwapchainConfig do we try to build? Well, the best one we can.
+Unfortunately, this varies by quite a bit. Even if I just switch from the Vulkan
+backend to the DX12 backend on a single machine the system ends up giving me
+different compatibility results.
+
+The SwapchainConfig type does have a `from_caps` method to try and help you
+build a value, but it's shockingly error prone, because not all of the
+capabilities of your Surface are actually contained in the SurfaceCapabilities
+struct! The `Surface::compatibility` also gives you Format, PresentMode, and
+CompositeAlpha that you have to pay attention to, which `from_caps` totally
+ignores. We're not going to use that, we'll just write out a struct literal
+ourselves. SwapchainConfig looks like this:
+
+```rust
+pub struct SwapchainConfig {
+  pub present_mode: PresentMode,
+  pub composite_alpha: CompositeAlpha,
+  pub format: Format,
+  pub extent: Extent2D,
+  pub image_count: SwapImageIndex,
+  pub image_layers: Layer,
+  pub image_usage: Usage,
+}
+```
+
+* `present_mode`:
+  [PresentMode](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/enum.PresentMode.html)
+  gives us access to that sweet, sweet Vsync. Well, if it's available.
+  * We would most like to have `Mailbox`, which lets us do "triple buffering".
+    That's where you have at least 3 images, and one is "being shown" and then
+    you render frames as quick as you can to different swapchain slots, always
+    keeping the most recent complete frame ready. This gives the least amount of
+    latency between user input and what they see on the screen.
+  * We would accept `Fifo`, where frames are shown in the exact order that they're
+    created. If you do this with 2 images you can have "double buffering" (where
+    you show one frame and work on the next), but if you're using this with more
+    than two images then it causes excess latency between input and display.
+  * We would begrudgingly accept `Relaxed` if we had to use it, which "usually"
+    has vsync but not always. I suppose this is for low-end machines. We want to
+    avoid this if we can.
+  * We would hate to have to use `Immediate`, where there's no vsync at all.
+    That would just be terrible. We could live with it, but it'd be terrible
+    because we'd have to sync the program ourselves to avoid eating up 100% of
+    the core (and all of the user's battery, if they're on a mobile device).
+* `composite_alpha`:
+  [CompositeAlpha](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/enum.CompositeAlpha.html)
+  controls how your window interacts with other windows within the user's UI.
+  * For now we'd prefer `Opaque`, so that we just show our window "normally".
+  * We'd also accept `Native`, because we trust the user to have set things up
+    how they want.
+  * `PreMultiplied` or `PostMultiplied` will almost certainly give "wrong"
+    results because our graphics aren't smart enough to compensate for being
+    forced into such a mode. Well, they'd be wrong if our graphics were anything
+    more than a single clear color, but you know what I mean.
+* `format`: The
+  [Format](https://docs.rs/gfx-hal/0.1.0/gfx_hal/format/enum.Format.html) of the
+  swapchain is how the data for each pixel is expected to exist in memory.
+  _Normally_ we'd be a lot more interested, but since we're just clearing the
+  screen it doesn't super matter. Still, we'll try to pick an sRGB format (which
+  stands for "standard Red Green Blue"), just because that's what we'll be using
+  in basically all the future lessons. Here we've got an `Option<Vec<_>>`, which
+  means that the selection block will be silly and fiddly.
+* `extent`: The
+  [Extent2D](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/struct.Extent2D.html)
+  describes a full sized rectangle (not a sub-rectangle), and selects a size for
+  our images. Here's where we start using the SurfaceCapabilities that we got
+  earlier. The SwapchainConfig `extent` that we use must be within the range
+  that the `extents: Range<Extent2D>` field in our SurfaceCapabilities
+  specifies. Note that the
+  [Range](https://doc.rust-lang.org/nightly/core/ops/struct.Range.html) type is
+  semantically supposed to be _exclusive_ but both the Vulkan and DX12 backends
+  use it wrong, so it's actually an inclusive value here.
+  * As far as what extent we're actually going to pick, we'll go as big as we
+    can. The Surface should should end up being the size of our Window, so our
+    images are just "normal" size and it all works out.
+* `image_count`: The
+  [SwapImageIndex](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/type.SwapImageIndex.html)
+  is just a `u32` for how many images we want in our Swapchain. Like I said, if
+  we're going to be using `Mailbox` then we want 3, otherwise we'll go with 2.
+  Note that we have to respect the `image_count: Range<SwapImageIndex>` field of
+  the SurfaceCapabilities, which is _another_ field that is a Range but should
+  actually be a RangeInclusive.
+* `image_layers`: The
+  [Layer](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/type.Layer.html) is just a
+  `u16` for how many layers we want in our image. 1 is fine.
+* `image_usage`: The
+  [Usage](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/struct.Usage.html) defines
+  how we'll be using the images in the swap chain in terms of the render pass
+  stuff. We'll be using just color for now, so we check for that.
+
+With that all done, we make the SwapchainConfig and then we use the Device to
+build a Swapchain and Backbuffer pair. This is a very vertical portion, but not
+too much is actually happening.
+
+```rust
+let (swapchain, extent, backbuffer, format, frames_in_flight) = {
+  let (caps, preferred_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+  info!("{:?}", caps);
+  info!("Preferred Formats: {:?}", preferred_formats);
+  info!("Present Modes: {:?}", present_modes);
+  info!("Composite Alphas: {:?}", composite_alphas);
+  //
+  let present_mode = {
+    use gfx_hal::window::PresentMode::*;
+    [Mailbox, Fifo, Relaxed, Immediate]
+      .iter()
+      .cloned()
+      .find(|pm| present_modes.contains(pm))
+      .ok_or("No PresentMode values specified!")?
+  };
+  let composite_alpha = {
+    use gfx_hal::window::CompositeAlpha::*;
+    [Opaque, Inherit, PreMultiplied, PostMultiplied]
+      .iter()
+      .cloned()
+      .find(|ca| composite_alphas.contains(ca))
+      .ok_or("No CompositeAlpha values specified!")?
+  };
+  let format = match preferred_formats {
+    None => Format::Rgba8Srgb,
+    Some(formats) => match formats
+      .iter()
+      .find(|format| format.base_format().1 == ChannelType::Srgb)
+      .cloned()
+    {
+      Some(srgb_format) => srgb_format,
+      None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
+    },
+  };
+  let extent = caps.extents.end;
+  let image_count = if present_mode == PresentMode::Mailbox {
+    (caps.image_count.end - 1).min(3)
+  } else {
+    (caps.image_count.end - 1).min(2)
+  };
+  let image_layers = 1;
+  let image_usage = if caps.usage.contains(Usage::COLOR_ATTACHMENT) {
+    Usage::COLOR_ATTACHMENT
+  } else {
+    Err("The Surface isn't capable of supporting color!")?
+  };
+  let swapchain_config = SwapchainConfig {
+    present_mode,
+    composite_alpha,
+    format,
+    extent,
+    image_count,
+    image_layers,
+    image_usage,
+  };
+  info!("{:?}", swapchain_config);
+  //
+  let (swapchain, backbuffer) = unsafe {
+    device
+      .create_swapchain(&mut surface, swapchain_config, None)
+      .map_err(|_| "Failed to create the swapchain!")?
+  };
+  (swapchain, extent, backbuffer, format, image_count as usize)
+};
+```
+
+#### render_area
+
+This is a [Rect](https://docs.rs/gfx-hal/0.1.0/gfx_hal/pso/struct.Rect.html)
+version of our Extent2D. While an Extent2D is semantically the full area of an
+image or texture (storing only width:`u32` and height:`u32`), a Rect is some
+sub-portion of such an area (storing x,y,w,h, all `i16`). Note that your
+sub-portion can totally just be "all of it".
+
+#### frames_in_flight
+
+This is just us storing how many images are in our Swapchain. As you saw when we
+cleared the screen, we'll have one set of just about everything per frame in
+flight.
+
+### Fences and Semaphores
 
 TODO
+
+## RenderPass
+### render_pass (requires a Device)
+
+## Targets For Rendering
+### backbuffer (requires Surface+Adapter)
+### image_views (requires a Device+Backbuffer)
+### framebuffers (requires ImageView values)
+
+## Command Issuing
+### Command Pool (requires Device)
+### command_buffers (requires a CommandPool + Swapchain)
+
+## Misc
+### current_frame (just starts at 0)
 
 # Cleaning Up `HalState`
 

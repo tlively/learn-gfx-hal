@@ -18,12 +18,12 @@ use gfx_hal::{
   device::Device,
   error::HostExecutionError,
   format::{Aspects, ChannelType, Format, Swizzle},
-  image::{Extent, Layout, SubresourceRange, ViewKind},
+  image::{Extent, Layout, SubresourceRange, Usage, ViewKind},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{PipelineStage, Rect},
   queue::{family::QueueGroup, Submission},
-  window::{Backbuffer, CompositeAlpha, FrameSync, PresentMode, Swapchain, SwapchainConfig},
+  window::{Backbuffer, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
@@ -38,7 +38,7 @@ pub struct HalState {
   image_available_semaphores: Vec<<back::Backend as Backend>::Semaphore>,
   command_buffers: Vec<CommandBuffer<back::Backend, Graphics, MultiShot, Primary>>,
   command_pool: ManuallyDrop<CommandPool<back::Backend, Graphics>>,
-  swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
+  framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
   image_views: Vec<(<back::Backend as Backend>::ImageView)>,
   render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
   render_area: Rect,
@@ -50,9 +50,7 @@ pub struct HalState {
   _instance: ManuallyDrop<back::Instance>,
 }
 impl HalState {
-  const MAX_FRAMES_IN_FLIGHT: usize = 3;
-
-  pub fn new(window: &Window) -> Self {
+  pub fn new(window: &Window) -> Result<Self, &'static str> {
     // Create An Instance
     let instance = back::Instance::create(WINDOW_NAME, 1);
 
@@ -66,86 +64,98 @@ impl HalState {
       .find(|a| {
         a.queue_families
           .iter()
-          .any(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
+          .any(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
       })
-      .expect("Couldn't find a graphical Adapter!");
+      .ok_or("Couldn't find a graphical Adapter!")?;
 
-    // Open A Device
+    // Open A Device and take out a QueueGroup
     let (device, queue_group) = {
       let queue_family = adapter
         .queue_families
         .iter()
-        .find(|qf| qf.supports_graphics() && surface.supports_queue_family(qf))
-        .expect("Couldn't find a QueueFamily with graphics!");
+        .find(|qf| qf.supports_graphics() && qf.max_queues() > 0 && surface.supports_queue_family(qf))
+        .ok_or("Couldn't find a QueueFamily with graphics!")?;
       let Gpu { device, mut queues } = unsafe {
         adapter
           .physical_device
           .open(&[(&queue_family, &[1.0; 1])])
-          .expect("Couldn't open the PhysicalDevice!")
+          .map_err(|_| "Couldn't open the PhysicalDevice!")?
       };
       let queue_group = queues
         .take::<Graphics>(queue_family.id())
-        .expect("Couldn't take ownership of the QueueGroup!");
-      debug_assert!(queue_group.queues.len() > 0);
+        .ok_or("Couldn't take ownership of the QueueGroup!")?;
+      let _ = if queue_group.queues.len() > 0 {
+        Ok(())
+      } else {
+        Err("The QueueGroup did not have any CommandQueues available!")
+      }?;
       (device, queue_group)
     };
 
     // Create A Swapchain, this is extra long
     let (swapchain, extent, backbuffer, format, frames_in_flight) = {
-      let (caps, opt_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let (caps, preferred_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      info!("{:?}", caps);
+      info!("Preferred Formats: {:?}", preferred_formats);
+      info!("Present Modes: {:?}", present_modes);
+      info!("Composite Alphas: {:?}", composite_alphas);
       //
-      info!("Available Formats: {:?}", opt_formats);
-      let format = opt_formats.map_or(Format::Rgba8Srgb, |formats| {
-        formats
+      let present_mode = {
+        use gfx_hal::window::PresentMode::*;
+        [Mailbox, Fifo, Relaxed, Immediate]
+          .iter()
+          .cloned()
+          .find(|pm| present_modes.contains(pm))
+          .ok_or("No PresentMode values specified!")?
+      };
+      let composite_alpha = {
+        use gfx_hal::window::CompositeAlpha::*;
+        [Opaque, Inherit, PreMultiplied, PostMultiplied]
+          .iter()
+          .cloned()
+          .find(|ca| composite_alphas.contains(ca))
+          .ok_or("No CompositeAlpha values specified!")?
+      };
+      let format = match preferred_formats {
+        None => Format::Rgba8Srgb,
+        Some(formats) => match formats
           .iter()
           .find(|format| format.base_format().1 == ChannelType::Srgb)
           .cloned()
-          .unwrap_or(*formats.get(0).expect("Given an empty preferred format list!"))
-      });
-      info!("Selected Format: {:?}", format);
-      //
-      info!("Available PresentMode: {:?}", present_modes);
-      let present_mode = if present_modes.contains(&PresentMode::Mailbox) {
-        PresentMode::Mailbox
-      } else if present_modes.contains(&PresentMode::Fifo) {
-        PresentMode::Fifo
-      } else if present_modes.contains(&PresentMode::Relaxed) {
-        PresentMode::Relaxed
-      } else if present_modes.contains(&PresentMode::Immediate) {
-        PresentMode::Immediate
-      } else {
-        panic!("Couldn't select a Swapchain presentation mode!")
+        {
+          Some(srgb_format) => srgb_format,
+          None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
+        },
       };
-      info!("Selected PresentMode: {:?}", present_mode);
-      //
-      let mut swap_config = SwapchainConfig::from_caps(&caps, format, caps.extents.end).with_mode(present_mode);
-      //
-      info!("Available CompositeAlpha: {:?}", composite_alphas);
-      let selected_composite_alpha = if composite_alphas.contains(&CompositeAlpha::Opaque) {
-        CompositeAlpha::Opaque
-      } else if composite_alphas.contains(&CompositeAlpha::PreMultiplied) {
-        CompositeAlpha::PreMultiplied
-      } else if composite_alphas.contains(&CompositeAlpha::PostMultiplied) {
-        CompositeAlpha::PostMultiplied
-      } else if composite_alphas.contains(&CompositeAlpha::Inherit) {
-        CompositeAlpha::Inherit
+      let extent = caps.extents.end;
+      let image_count = if present_mode == PresentMode::Mailbox {
+        (caps.image_count.end - 1).min(3)
       } else {
-        panic!("Couldn't select a CompositeAlpha mode!")
+        (caps.image_count.end - 1).min(2)
       };
-      info!("Selected CompositeAlpha: {:?}", selected_composite_alpha);
-      swap_config.composite_alpha = selected_composite_alpha;
+      let image_layers = 1;
+      let image_usage = if caps.usage.contains(Usage::COLOR_ATTACHMENT) {
+        Usage::COLOR_ATTACHMENT
+      } else {
+        Err("The Surface isn't capable of supporting color!")?
+      };
+      let swapchain_config = SwapchainConfig {
+        present_mode,
+        composite_alpha,
+        format,
+        extent,
+        image_count,
+        image_layers,
+        image_usage,
+      };
+      info!("{:?}", swapchain_config);
       //
-      assert!(caps.image_count.end as usize > Self::MAX_FRAMES_IN_FLIGHT);
-      swap_config.image_count = Self::MAX_FRAMES_IN_FLIGHT as u32;
-      let frames_in_flight = swap_config.image_count as usize;
-      //
-      let extent = swap_config.extent;
       let (swapchain, backbuffer) = unsafe {
         device
-          .create_swapchain(&mut surface, swap_config, None)
-          .expect("Failed to create the swapchain!")
+          .create_swapchain(&mut surface, swapchain_config, None)
+          .map_err(|_| "Failed to create the swapchain!")?
       };
-      (swapchain, extent, backbuffer, format, frames_in_flight)
+      (swapchain, extent, backbuffer, format, image_count as usize)
     };
 
     // Define A RenderPass
@@ -170,7 +180,7 @@ impl HalState {
       unsafe {
         device
           .create_render_pass(&[color_attachment], &[subpass], &[])
-          .expect("Couldn't create a render pass!")
+          .map_err(|_| "Couldn't create a render pass!")?
       }
     };
 
@@ -191,14 +201,14 @@ impl HalState {
                 layers: 0..1,
               },
             )
-            .expect("Couldn't create the image_view for the image!")
+            .map_err(|_| "Couldn't create the image_view for the image!")
         })
-        .collect(),
+        .collect::<Result<Vec<_>, &str>>()?,
       Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
     };
 
     // Create Our FrameBuffers
-    let swapchain_framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
+    let framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
       image_views
         .iter()
         .map(|image_view| unsafe {
@@ -212,23 +222,20 @@ impl HalState {
                 depth: 1,
               },
             )
-            .expect("Failed to create a framebuffer!")
+            .map_err(|_| "Failed to create a framebuffer!")
         })
-        .collect()
+        .collect::<Result<Vec<_>, &str>>()?
     };
 
     // Create Our CommandPool
     let mut command_pool = unsafe {
       device
         .create_command_pool_typed(&queue_group, CommandPoolCreateFlags::RESET_INDIVIDUAL)
-        .expect("Could not create the raw command pool!")
+        .map_err(|_| "Could not create the raw command pool!")?
     };
 
     // Create Our CommandBuffers
-    let command_buffers: Vec<_> = swapchain_framebuffers
-      .iter()
-      .map(|_| command_pool.acquire_command_buffer())
-      .collect();
+    let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
     // Create Our Sync Primitives
     let (image_available_semaphores, render_finished_semaphores, in_flight_fences) = {
@@ -236,14 +243,14 @@ impl HalState {
       let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
       let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
       for _ in 0..command_buffers.len() {
-        image_available_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-        render_finished_semaphores.push(device.create_semaphore().expect("Could not create a semaphore!"));
-        in_flight_fences.push(device.create_fence(true).expect("Could not create a fence!"));
+        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
       }
       (image_available_semaphores, render_finished_semaphores, in_flight_fences)
     };
 
-    Self {
+    Ok(Self {
       _instance: ManuallyDrop::new(instance),
       _surface: surface,
       _adapter: adapter,
@@ -253,7 +260,7 @@ impl HalState {
       render_area: extent.to_extent().rect(),
       render_pass: ManuallyDrop::new(render_pass),
       image_views,
-      swapchain_framebuffers,
+      framebuffers,
       command_pool: ManuallyDrop::new(command_pool),
       command_buffers,
       image_available_semaphores,
@@ -261,11 +268,11 @@ impl HalState {
       in_flight_fences,
       frames_in_flight,
       current_frame: 0,
-    }
+    })
   }
 
   /// Draw a frame that's just cleared to the color specified.
-  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
+  pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
     let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
@@ -296,7 +303,7 @@ impl HalState {
       buffer.begin(false);
       buffer.begin_render_pass_inline(
         &self.render_pass,
-        &self.swapchain_framebuffers[i_usize],
+        &self.framebuffers[i_usize],
         self.render_area,
         clear_values.iter(),
       );
@@ -343,7 +350,7 @@ impl core::ops::Drop for HalState {
       for semaphore in self.image_available_semaphores.drain(..) {
         self.device.destroy_semaphore(semaphore)
       }
-      for framebuffer in self.swapchain_framebuffers.drain(..) {
+      for framebuffer in self.framebuffers.drain(..) {
         self.device.destroy_framebuffer(framebuffer);
       }
       for image_view in self.image_views.drain(..) {
@@ -407,7 +414,10 @@ fn main() {
 
   let mut winit_state = WinitState::default();
 
-  let mut hal_state = HalState::new(&winit_state.window);
+  let mut hal_state = match HalState::new(&winit_state.window) {
+    Ok(state) => state,
+    Err(e) => panic!(e),
+  };
 
   let mut running = true;
   let (mut frame_width, mut frame_height) = winit_state
