@@ -37,9 +37,9 @@ script:
   - |
     if [[ $JOB == "vulkan" ]]; then \
       cargo build --examples --features="vulkan" && \
-      cargo build --examples --features="vulkan" --release && \
-      cd book && mdbook build; \
+      cargo build --examples --features="vulkan" --release; \
     fi
+  - cd book && mdbook build
 
 deploy:
   provider: pages
