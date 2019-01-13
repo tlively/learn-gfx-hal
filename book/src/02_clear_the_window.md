@@ -485,10 +485,19 @@ impl HalState {
 
 The heart of it all is that we want to be able to safely call
 [CommandQueue::submit](https://docs.rs/gfx-hal/0.1.0/gfx_hal/queue/struct.CommandQueue.html#method.submit),
-which defines the "list" of what to do, and then we call
+which submits a list of work which we define in a `CommandBuffer` to the GPU (in
+this case just clearing the image), and then we call
 [Swapchain::present](https://docs.rs/gfx-hal/0.1.0/gfx_hal/window/trait.Swapchain.html#method.present),
-which does the work and places the output into the "swapchain" of images that
-the GPU uses from frame to frame.
+which instructs the GPU to wait until the CommandQueue work is done and
+"present" the completed image into the Swapchain.
+
+_Exactly_ what happens at that point depends on how you've configured the
+Swapchain, which we'll talk about in the initialization section. The important
+part to remember here is that `Swapchain::present` is effectively a
+**non-blocking** call. If you're used to using OpenGL you might expect `present`
+to be the point where your loop halts until Vsync, but with `gfx-hal` anything
+that makes the CPU wait on the GPU is controlled via "Fences" (which we'll see
+in a moment), and that doesn't include `present`.
 
 ### `submit`
 
