@@ -13,3 +13,8 @@ isn't Vulkan.
 I don't assume you have any prior graphics programming skills. I sure don't have
 much myself. I drew a quad once in OpenGL, but that's it. We'll be learning and
 reviewing all that stuff together.
+
+The code all assumes that you're using **Rust 2018**.
+
+I set rustfmt to have 2 space indents and a line limit of 130. I hope you're
+fine with that.

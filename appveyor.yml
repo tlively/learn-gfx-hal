@@ -1,11 +1,11 @@
 cache:
-  - C:\projects\learn-gfx-hal\target\debug\deps -> appveyor.yml
-  - C:\projects\learn-gfx-hal\target\release\deps -> appveyor.yml
+  - C:\projects\learn-gfx-hal\target\ -> appveyor.yml
 
 os: Visual Studio 2015
 
 environment:
   matrix:
+    # MSVC
     - channel: stable
       target: x86_64-pc-windows-msvc
     - channel: stable
@@ -14,7 +14,7 @@ environment:
       target: x86_64-pc-windows-msvc
     - channel: nightly
       target: i686-pc-windows-msvc
-# GNU
+#    # GNU
 #    - channel: stable
 #      target: x86_64-pc-windows-gnu
 #    - channel: stable
@@ -30,12 +30,12 @@ matrix:
 
 install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
-  - rustup-init -yv --default-toolchain %channel% --default-host %target%
+  - rustup-init -y --default-toolchain %channel% --default-host %target%
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
   - rustc -vV
   - cargo -vV
 
-# On advice of reptep we skip the build script and only use a test script
+# On advice of reptep we skip the "build" script phase
 build: false
 
 test_script:
