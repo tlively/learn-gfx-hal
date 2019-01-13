@@ -997,7 +997,10 @@ We have to call
 which gives a vector of things to pick from. Our criteria here is based on the `queue_families: Vec<B::QueueFamily>` that each Adapter has. We want a QueueFamily
 
 1) That supports Graphics
-3) That our Surface supports
+2) That our Surface supports
+
+It's considered a bug in `gfx-hal` if any backend ever gives a QueueFamily that
+has 0 max queues, so we don't need to bother checking that.
 
 Since we're going over a vector, we can use some fancy Iterator stuff
 
