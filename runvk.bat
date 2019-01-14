@@ -1,1 +1,1 @@
-cargo run --example one_triangle --features="vulkan"
+cargo run --example triangle_intro --features="vulkan"

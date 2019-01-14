@@ -27,7 +27,7 @@ use gfx_hal::{
 };
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
-pub const WINDOW_NAME: &str = "One Triangle";
+pub const WINDOW_NAME: &str = "Triangle Intro";
 
 pub struct HalState {
   current_frame: usize,
