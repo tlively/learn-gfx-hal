@@ -24,6 +24,26 @@ from.
   and the [GitHub Pages site](https://lokathor.github.io/learn-gfx-hal/) for
   this repository hosts a rendered version of the master branch.
 
+## Requirements
+
+Uses [shaderc-rs](https://github.com/google/shaderc-rs), please follow [their
+setup instructions](https://github.com/google/shaderc-rs#setup).
+
+* Regarding `msys2` on Windows: Note that the _first_ time you run the `pacman`
+  command they list it _doesn't install the packages_. Instead it actually just
+  installs the latest pacman and msys files. You have to then close that window
+  entirely and open a new one, then run the `pacman` command again to make it
+  actually download the stuff. I know that sounds stupid, but that's really what
+  you do.
+  * Add `C:\msys64\usr\bin` to your path
+  * Add `C:\msys64\mingw64\bin` to your path
+  * Open a command prompt as Administrator and make a symbolic link for
+    `python3.exe` to also be seen as `python.exe`
+    * `mklink C:\msys64\mingw64\bin\python.exe C:\msys64\mingw64\bin\python3.exe`
+  * If you installed to some place other than `C:\msys64` adjust accordingly
+  * Yes, this is stupid, and also real advice that you actually have to do in
+    this, the year of our lord 2018.
+
 ## Contribution
 
 This repo is Apache 2 licensed and all of your contributions must be made under

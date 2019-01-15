@@ -16,6 +16,10 @@ matrix:
             - ubuntu-toolchain-r-test
           packages:
             - g++-5
+            - build-essentials
+            - git
+            - python
+            - cmake
     - os: osx
       osx_image: xcode9
       compiler: clang
@@ -36,6 +40,7 @@ script:
     fi
   - |
     if [[ $JOB == "metal" ]]; then \
+      brew install cmake && \
       cargo build --examples --features="metal" && \
       cargo build --examples --features="metal" --release; \
     fi

@@ -14,15 +14,7 @@ environment:
       target: x86_64-pc-windows-msvc
     - channel: nightly
       target: i686-pc-windows-msvc
-#    # GNU
-#    - channel: stable
-#      target: x86_64-pc-windows-gnu
-#    - channel: stable
-#      target: i686-pc-windows-gnu
-#    - channel: nightly
-#      target: x86_64-pc-windows-gnu
-#    - channel: nightly
-#      target: i686-pc-windows-gnu
+    # GNU is not supported by shaderc-rs
 
 matrix:
   allow_failures:
@@ -32,6 +24,10 @@ install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
   - rustup-init -y --default-toolchain %channel% --default-host %target%
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
+  - set PATH=%PATH%;C:\msys64\usr\bin
+  - set PATH=%PATH%;C:\msys64\mingw64\bin
+  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python3
+  - mklink C:\msys64\mingw64\bin\python.exe C:\msys64\mingw64\bin\python3.exe
   - rustc -vV
   - cargo -vV
 

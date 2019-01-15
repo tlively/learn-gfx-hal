@@ -29,6 +29,10 @@ use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBu
 
 pub const WINDOW_NAME: &str = "Triangle Intro";
 
+pub struct Triangle {
+  pub points: [[f32; 2]; 3],
+}
+
 pub struct HalState {
   current_frame: usize,
   frames_in_flight: usize,
@@ -307,6 +311,71 @@ impl HalState {
         self.render_area,
         clear_values.iter(),
       );
+      buffer.finish();
+    }
+
+    // SUBMISSION AND PRESENT
+    let command_buffers = &self.command_buffers[i_usize..=i_usize];
+    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    // yes, you have to write it twice like this. yes, it's silly.
+    let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
+    let submission = Submission {
+      command_buffers,
+      wait_semaphores,
+      signal_semaphores,
+    };
+    let the_command_queue = &mut self.queue_group.queues[0];
+    unsafe {
+      the_command_queue.submit(submission, Some(flight_fence));
+      self
+        .swapchain
+        .present(the_command_queue, i_u32, present_wait_semaphores)
+        .map_err(|_| "Failed to present into the swapchain!")
+    }
+  }
+
+  pub fn draw_triangle_frame(&mut self, triangle: Triangle) -> Result<(), &'static str> {
+    // SETUP FOR THIS FRAME
+    let flight_fence = &self.in_flight_fences[self.current_frame];
+    let image_available = &self.image_available_semaphores[self.current_frame];
+    let render_finished = &self.render_finished_semaphores[self.current_frame];
+    // Advance the frame _before_ we start using the `?` operator
+    self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
+
+    let (i_u32, i_usize) = unsafe {
+      self
+        .device
+        .wait_for_fence(flight_fence, core::u64::MAX)
+        .map_err(|_| "Failed to wait on the fence!")?;
+      self
+        .device
+        .reset_fence(flight_fence)
+        .map_err(|_| "Couldn't reset the fence!")?;
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    // RECORD COMMANDS
+    unsafe {
+      let buffer = &mut self.command_buffers[i_usize];
+      const TRIANGLE_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
+      buffer.begin(false);
+      {
+        let _encoder = buffer.begin_render_pass_inline(
+          &self.render_pass,
+          &self.framebuffers[i_usize],
+          self.render_area,
+          TRIANGLE_CLEAR.iter(),
+        );
+        //encoder.bind_graphics_pipeline(&self.pipeline);
+        //let buffers: ArrayList<[_; 1]> = [(&self.buffer, 0)].into();
+        //encoder.bind_vertex_buffers(0, buffers);
+        //encoder.draw(0 .. 3, 0 .. 1);
+      }
       buffer.finish();
     }
 
