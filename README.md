@@ -2,11 +2,12 @@
 [![AppVeyor](https://ci.appveyor.com/api/projects/status/39wvbxxstqjd2vi8?svg=true)](https://ci.appveyor.com/project/Lokathor/learn-gfx-hal)
 [![travis.ci](https://travis-ci.org/Lokathor/learn-gfx-hal.svg?branch=master)](https://travis-ci.org/Lokathor/learn-gfx-hal)
 
-![gfx-hal:0.1](https://img.shields.io/badge/gfx--hal-0.1-blue.svg)
+[![gfx-hal:0.1](https://img.shields.io/badge/gfx--hal-0.1-blue.svg)](https://docs.rs/gfx-hal)
 
 # learn-gfx-hal
 
-Step by step tutorials for using the `gfx-hal` crate.
+Step by step tutorials for using the [gfx-hal](https://github.com/gfx-rs/gfx)
+crate.
 
 The tutorials all target the current version _on crates.io_, not on the master
 branch of git. At the time of me writing this that means `0.1.0`.
