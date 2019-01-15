@@ -5,16 +5,12 @@ os: Visual Studio 2015
 
 environment:
   matrix:
-    # MSVC
+    # MSVC, only bother to verify stable
     - channel: stable
       target: x86_64-pc-windows-msvc
     - channel: stable
       target: i686-pc-windows-msvc
-    - channel: nightly
-      target: x86_64-pc-windows-msvc
-    - channel: nightly
-      target: i686-pc-windows-msvc
-    # GNU is not supported by shaderc-rs
+    # GNU is not supported by shaderc-rs :(
 
 matrix:
   allow_failures:
