@@ -33,16 +33,17 @@ setup instructions](https://github.com/google/shaderc-rs#setup).
   command they list it _doesn't install the packages_. Instead it actually just
   installs the latest pacman and msys files. You have to then close that window
   entirely and open a new one, then run the `pacman` command again to make it
-  actually download the stuff. I know that sounds stupid, but that's really what
-  you do.
-  * Add `C:\msys64\usr\bin` to your path
-  * Add `C:\msys64\mingw64\bin` to your path
+  actually download the stuff.
+* The following steps assume you installed to `C:\msys64`. If not, adjust
+  accordingly:
+  * When they say "the msys2 mingw64 binary path" they mean `C:\msys64\usr\bin`
+    and `C:\msys64\mingw64\bin`.
   * Open a command prompt as Administrator and make a symbolic link for
     `python3.exe` to also be seen as `python.exe`
     * `mklink C:\msys64\mingw64\bin\python.exe C:\msys64\mingw64\bin\python3.exe`
-  * If you installed to some place other than `C:\msys64` adjust accordingly
-  * Yes, this is stupid, and also real advice that you actually have to do in
-    this, the year of our lord 2018.
+* Yes, everything I just told you to do is totally stupid, but it is also real
+  advice that you must follow in this, the year of our lord two thousand and
+  nineteen, if you want to program 3D graphics programs.
 
 ## Contribution
 
