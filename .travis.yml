@@ -7,7 +7,6 @@ os:
   #- windows # Waiting on https://travis-ci.community/t/timeout-before-install-step/1502/3
 language: rust
 rust:
-  - nightly
   - stable
 cache:
   cargo
