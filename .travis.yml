@@ -1,31 +1,16 @@
+# The shaderc dependencies are already installed on the base images
+# so we dont need to worry about installing them.
+dist: xenial
+os:
+  - linux
+  - osx
+  #- windows # Waiting on https://travis-ci.community/t/timeout-before-install-step/1502/3
 language: rust
-sudo: false
-cache: cargo
-
-matrix:
-  include:
-    - os: linux
-      compiler: gcc
-      env:
-        - JOB=vulkan
-        - CXX=g++-5
-      addons:
-        apt:
-          sources:
-            - llvm-toolchain-precise
-            - ubuntu-toolchain-r-test
-          packages:
-            - g++-5
-            - build-essentials
-            - git
-            - python
-            - cmake
-    - os: osx
-      osx_image: xcode9
-      compiler: clang
-      env:
-        - JOB=metal
-        - MACOSX_DEPLOYMENT_TARGET=10.9
+rust:
+  - nightly
+  - stable
+cache:
+  cargo
 
 before_script:
   - (test -x $HOME/.cargo/bin/cargo-install-update || cargo install cargo-update)
@@ -34,16 +19,13 @@ before_script:
 
 script:
   - |
-    if [[ $JOB == "vulkan" ]]; then \
-      cargo build --examples --features="vulkan" && \
-      cargo build --examples --features="vulkan" --release; \
-    fi
+    [ $TRAVIS_OS_NAME = linux ] &&
+    cargo build --examples --features="vulkan" &&
+    cargo build --examples --features="vulkan" --release
   - |
-    if [[ $JOB == "metal" ]]; then \
-      brew install cmake && \
-      cargo build --examples --features="metal" && \
-      cargo build --examples --features="metal" --release; \
-    fi
+    [ $TRAVIS_OS_NAME = osx ] &&
+    cargo build --examples --features="metal" &&
+    cargo build --examples --features="metal" --release
   - cd book && mdbook build
 
 deploy:
