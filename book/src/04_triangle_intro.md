@@ -67,7 +67,7 @@ As we go further I should probably define two terms you might see come up here
 or in other graphics tutorials: Immediate API and Retained API.
 
 * An immediate API is any API where you call a function with an argument and it
-  does all the work with that argument right then, without sorting the argument
+  does all the work with that argument right then, without storing the argument
   data for later.
 * A retained API is any API where your function calls cause data to be
   _retained_ by the system. Usually you make some calls to set up the situation,

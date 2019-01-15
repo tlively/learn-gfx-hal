@@ -31,7 +31,7 @@ Uses [shaderc-rs](https://github.com/google/shaderc-rs), please follow [their
 setup instructions](https://github.com/google/shaderc-rs#setup).
 
 * Regarding `msys2` on Windows: Note that the _first_ time you run the `pacman`
-  command they list it _doesn't install the packages_. Instead it actually just
+  command they list _it doesn't install the packages_. Instead it actually just
   installs the latest pacman and msys files. You have to then close that window
   entirely and open a new one, then run the `pacman` command again to make it
   actually download the stuff.
