@@ -43,3 +43,4 @@ deploy:
   verbose: true
   on:
     branch: master
+    condition: $TRAVIS_OS_NAME = linux
