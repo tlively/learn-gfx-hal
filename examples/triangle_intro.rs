@@ -18,16 +18,38 @@ use gfx_hal::{
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
   image::{Extent, Layout, SubresourceRange, Usage, ViewKind},
-  pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, SubpassDesc},
+  pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
-  pso::{PipelineStage, Rect},
+  pso::{
+    AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc,
+    DepthTest, DescriptorSetLayoutBinding, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
+    InputAssemblerDesc, LogicOp, Multisampling, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect,
+    ShaderStageFlags, Specialization, StencilTest, VertexBufferDesc, Viewport,
+  },
   queue::{family::QueueGroup, Submission},
-  window::{Backbuffer, FrameSync, PresentMode, Swapchain, SwapchainConfig},
-  Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
+  window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
+  Backend, Gpu, Graphics, Instance, Primitive, QueueFamily, Surface,
 };
+
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 pub const WINDOW_NAME: &str = "Triangle Intro";
+
+pub const VERTEX_SOURCE: &str = "#version 330 core
+layout (location = 0) in vec2 position;
+
+void main()
+{
+  gl_Position = vec4(position, 0.0, 1.0);
+}";
+
+pub const FRAGMENT_SOURCE: &str = "#version 330 core
+out vec4 FragColor;
+
+void main()
+{
+  FragColor = vec4(1.0);
+}";
 
 pub struct Triangle {
   pub points: [[f32; 2]; 3],
@@ -273,6 +295,177 @@ impl HalState {
       frames_in_flight,
       current_frame: 0,
     })
+  }
+
+  fn create_pipeline(
+    device: &mut back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
+  ) -> Result<
+    (
+      Vec<<back::Backend as Backend>::DescriptorSetLayout>,
+      <back::Backend as Backend>::PipelineLayout,
+      <back::Backend as Backend>::GraphicsPipeline,
+    ),
+    &'static str,
+  > {
+    let mut compiler = shaderc::Compiler::new().ok_or("shaderc not found!")?;
+    let vertex_compile_artifact = compiler
+      .compile_into_spirv(VERTEX_SOURCE, shaderc::ShaderKind::Vertex, "vertex.vert", "main", None)
+      .map_err(|_| "Couldn't compile vertex shader!")?;
+    let fragment_compile_artifact = compiler
+      .compile_into_spirv(FRAGMENT_SOURCE, shaderc::ShaderKind::Fragment, "fragment.frag", "main", None)
+      .map_err(|_| "Couldn't compile fragment shader!")?;
+    let vertex_shader_module = unsafe {
+      device
+        .create_shader_module(vertex_compile_artifact.as_binary_u8())
+        .map_err(|_| "Couldn't make the vertex module")?
+    };
+    let fragment_shader_module = unsafe {
+      device
+        .create_shader_module(fragment_compile_artifact.as_binary_u8())
+        .map_err(|_| "Couldn't make the fragment module")?
+    };
+    let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) = {
+      let (vs_entry, fs_entry) = (
+        EntryPoint::<back::Backend> {
+          entry: "main",
+          module: &vertex_shader_module,
+          specialization: Specialization {
+            constants: &[],
+            data: &[],
+          },
+        },
+        EntryPoint::<back::Backend> {
+          entry: "main",
+          module: &fragment_shader_module,
+          specialization: Specialization {
+            constants: &[],
+            data: &[],
+          },
+        },
+      );
+      let shaders = GraphicsShaderSet {
+        vertex: vs_entry,
+        hull: None,
+        domain: None,
+        geometry: None,
+        fragment: Some(fs_entry),
+      };
+
+      let rasterizer = Rasterizer {
+        depth_clamping: false,
+        polygon_mode: PolygonMode::Fill,
+        cull_face: Face::BACK,
+        front_face: FrontFace::Clockwise,
+        depth_bias: None,
+        conservative: false,
+      };
+      let vertex_buffers: Vec<VertexBufferDesc> = Vec::new();
+      let attributes: Vec<AttributeDesc> = Vec::new();
+
+      let input_assembler = InputAssemblerDesc::new(Primitive::TriangleList);
+
+      let blender = {
+        let blend_state = BlendState::On {
+          color: BlendOp::Add {
+            src: Factor::One,
+            dst: Factor::Zero,
+          },
+          alpha: BlendOp::Add {
+            src: Factor::One,
+            dst: Factor::Zero,
+          },
+        };
+
+        BlendDesc {
+          logic_op: Some(LogicOp::Copy),
+          targets: vec![ColorBlendDesc(ColorMask::ALL, blend_state)],
+        }
+      };
+
+      let depth_stencil = DepthStencilDesc {
+        depth: DepthTest::Off,
+        depth_bounds: false,
+        stencil: StencilTest::Off,
+      };
+
+      let multisampling: Option<Multisampling> = None;
+
+      let baked_states = BakedStates {
+        viewport: Some(Viewport {
+          rect: Rect {
+            x: 0,
+            y: 0,
+            w: extent.width as i16,
+            h: extent.width as i16,
+          },
+          depth: (0.0..1.0),
+        }),
+        scissor: Some(Rect {
+          x: 0,
+          y: 0,
+          w: extent.width as i16,
+          h: extent.height as i16,
+        }),
+        blend_color: None,
+        depth_bounds: None,
+      };
+
+      let bindings = Vec::<DescriptorSetLayoutBinding>::new();
+      let immutable_samplers = Vec::<<back::Backend as Backend>::Sampler>::new();
+      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> = vec![unsafe {
+        device
+          .create_descriptor_set_layout(bindings, immutable_samplers)
+          .map_err(|_| "Couldn't make a DescriptorSetLayout")?
+      }];
+      let push_constants = Vec::<(ShaderStageFlags, std::ops::Range<u32>)>::new();
+      let layout = unsafe {
+        device
+          .create_pipeline_layout(&descriptor_set_layouts, push_constants)
+          .map_err(|_| "Couldn't create a pipeline layout")?
+      };
+
+      let subpass = Subpass {
+        index: 0,
+        main_pass: render_pass,
+      };
+
+      let flags = PipelineCreationFlags::empty();
+
+      let parent = BasePipeline::None;
+
+      let gfx_pipeline = {
+        let desc = GraphicsPipelineDesc {
+          shaders,
+          rasterizer,
+          vertex_buffers,
+          attributes,
+          input_assembler,
+          blender,
+          depth_stencil,
+          multisampling,
+          baked_states,
+          layout: &layout,
+          subpass,
+          flags,
+          parent,
+        };
+
+        unsafe {
+          device
+            .create_graphics_pipeline(&desc, None)
+            .map_err(|_| "Couldn't create a graphics pipeline!")?
+        }
+      };
+
+      (descriptor_set_layouts, layout, gfx_pipeline)
+    };
+
+    unsafe {
+      device.destroy_shader_module(vertex_shader_module);
+      device.destroy_shader_module(fragment_shader_module);
+    }
+
+    Ok((descriptor_set_layouts, pipeline_layout, gfx_pipeline))
   }
 
   /// Draw a frame that's just cleared to the color specified.
