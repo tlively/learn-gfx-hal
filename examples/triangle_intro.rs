@@ -1,4 +1,5 @@
 #![allow(clippy::len_zero)]
+#![allow(clippy::many_single_char_names)]
 
 #[allow(unused_imports)]
 use log::{debug, error, info, trace, warn};
@@ -40,7 +41,7 @@ pub const VERTEX_SOURCE: &str = "#version 450
 layout (location = 0) in vec2 position;
 
 out gl_PerVertex {
-    vec4 gl_Position;
+  vec4 gl_Position;
 };
 
 void main()
@@ -128,7 +129,7 @@ impl HalState {
       let queue_group = queues
         .take::<Graphics>(queue_family.id())
         .ok_or("Couldn't take ownership of the QueueGroup!")?;
-      let _ = if queue_group.queues.len() > 0 {
+      if queue_group.queues.len() > 0 {
         Ok(())
       } else {
         Err("The QueueGroup did not have any CommandQueues available!")
@@ -294,7 +295,7 @@ impl HalState {
     // Create Our CommandBuffers
     let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
-    // Make dat pipeline
+    // Build our pipeline and vertex buffer
     let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) = Self::create_pipeline(&mut device, extent, &render_pass)?;
     const F32_XY_TRIANGLE: u64 = (size_of::<f32>() * 2 * 3) as u64;
     let (buffer, memory, requirements) = unsafe {
@@ -302,15 +303,17 @@ impl HalState {
         .create_buffer(F32_XY_TRIANGLE, BufferUsage::VERTEX)
         .map_err(|_| "Couldn't create a buffer for the vertices")?;
       let requirements = device.get_buffer_requirements(&buffer);
-      // labeled loops are HAX but this does do it. CHANGE TO FIND OPERATION
-      let memory_type_id = 'label: loop {
-        for (id, memory_type) in adapter.physical_device.memory_properties().memory_types.iter().enumerate() {
-          if requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE) {
-            break 'label Ok(MemoryTypeId(id));
-          }
-        }
-        break 'label Err("Couldn't find a memory type to support the vertex buffer!");
-      }?;
+      let memory_type_id: MemoryTypeId = adapter
+        .physical_device
+        .memory_properties()
+        .memory_types
+        .iter()
+        .enumerate()
+        .find(|&(id, memory_type)| {
+          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE)
+        })
+        .map(|(id, _)| MemoryTypeId(id))
+        .ok_or("Couldn't find a memory type to support the vertex buffer!")?;
       let memory = device
         .allocate_memory(memory_type_id, requirements.size)
         .map_err(|_| "Couldn't allocate vertex buffer memory")?;
@@ -347,6 +350,7 @@ impl HalState {
     })
   }
 
+  #[allow(clippy::type_complexity)]
   fn create_pipeline(
     device: &mut back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
   ) -> Result<
@@ -379,7 +383,7 @@ impl HalState {
     };
     let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) = {
       let (vs_entry, fs_entry) = (
-        EntryPoint::<back::Backend> {
+        EntryPoint {
           entry: "main",
           module: &vertex_shader_module,
           specialization: Specialization {
@@ -387,7 +391,7 @@ impl HalState {
             data: &[],
           },
         },
-        EntryPoint::<back::Backend> {
+        EntryPoint {
           entry: "main",
           module: &fragment_shader_module,
           specialization: Specialization {
@@ -689,23 +693,21 @@ impl core::ops::Drop for HalState {
       }
       // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
       use core::ptr::read;
-      self.device.destroy_buffer(ManuallyDrop::into_inner(read(&mut self.buffer)));
-      self.device.free_memory(ManuallyDrop::into_inner(read(&mut self.memory)));
+      self.device.destroy_buffer(ManuallyDrop::into_inner(read(&self.buffer)));
+      self.device.free_memory(ManuallyDrop::into_inner(read(&self.memory)));
       self
         .device
-        .destroy_pipeline_layout(ManuallyDrop::into_inner(read(&mut self.pipeline_layout)));
+        .destroy_pipeline_layout(ManuallyDrop::into_inner(read(&self.pipeline_layout)));
       self
         .device
-        .destroy_graphics_pipeline(ManuallyDrop::into_inner(read(&mut self.graphics_pipeline)));
+        .destroy_graphics_pipeline(ManuallyDrop::into_inner(read(&self.graphics_pipeline)));
       self
         .device
-        .destroy_command_pool(ManuallyDrop::into_inner(read(&mut self.command_pool)).into_raw());
+        .destroy_command_pool(ManuallyDrop::into_inner(read(&self.command_pool)).into_raw());
       self
         .device
-        .destroy_render_pass(ManuallyDrop::into_inner(read(&mut self.render_pass)));
-      self
-        .device
-        .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
+        .destroy_render_pass(ManuallyDrop::into_inner(read(&self.render_pass)));
+      self.device.destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
       ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
