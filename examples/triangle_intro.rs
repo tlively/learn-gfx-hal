@@ -39,6 +39,10 @@ pub const WINDOW_NAME: &str = "Triangle Intro";
 pub const VERTEX_SOURCE: &str = "#version 450
 layout (location = 0) in vec2 position;
 
+out gl_PerVertex {
+    vec4 gl_Position;
+};
+
 void main()
 {
   gl_Position = vec4(position, 0.0, 1.0);
@@ -298,16 +302,14 @@ impl HalState {
         .create_buffer(F32_XY_TRIANGLE, BufferUsage::VERTEX)
         .map_err(|_| "Couldn't create a buffer for the vertices")?;
       let requirements = device.get_buffer_requirements(&buffer);
-      // labeled loops are HAX but this does do it.
+      // labeled loops are HAX but this does do it. CHANGE TO FIND OPERATION
       let memory_type_id = 'label: loop {
-        for memory_type in adapter.physical_device.memory_properties().memory_types.iter() {
-          if requirements.type_mask & (1 << memory_type.heap_index) != 0
-            && memory_type.properties.contains(Properties::CPU_VISIBLE)
-          {
-            break 'label Ok(MemoryTypeId(memory_type.heap_index));
+        for (id, memory_type) in adapter.physical_device.memory_properties().memory_types.iter().enumerate() {
+          if requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE) {
+            break 'label Ok(MemoryTypeId(id));
           }
         }
-        break 'label Err("Could find a memory type to support the vertex buffer!");
+        break 'label Err("Couldn't find a memory type to support the vertex buffer!");
       }?;
       let memory = device
         .allocate_memory(memory_type_id, requirements.size)
@@ -405,7 +407,7 @@ impl HalState {
       let rasterizer = Rasterizer {
         depth_clamping: false,
         polygon_mode: PolygonMode::Fill,
-        cull_face: Face::BACK,
+        cull_face: Face::NONE,
         front_face: FrontFace::Clockwise,
         depth_bias: None,
         conservative: false,
@@ -809,11 +811,12 @@ impl LocalState {
 }
 
 fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(), &'static str> {
-  let r = (local_state.mouse_x / local_state.frame_width) as f32;
-  let g = (local_state.mouse_y / local_state.frame_height) as f32;
-  let b = (r + g) * 0.3;
-  let a = 1.0;
-  hal_state.draw_clear_frame([r, g, b, a])
+  let x = ((local_state.mouse_x / local_state.frame_width) * 2.0) - 1.0;
+  let y = ((local_state.mouse_y / local_state.frame_height) * 2.0) - 1.0;
+  let triangle = Triangle {
+    points: [[-0.9, 0.9], [-0.9, -0.9], [x as f32, y as f32]],
+  };
+  hal_state.draw_triangle_frame(triangle)
 }
 
 fn main() {
