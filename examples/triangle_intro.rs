@@ -11,18 +11,20 @@ use gfx_backend_metal as back;
 use gfx_backend_vulkan as back;
 
 use arrayvec::ArrayVec;
-use core::mem::ManuallyDrop;
+use core::mem::{size_of, ManuallyDrop};
 use gfx_hal::{
-  adapter::{Adapter, PhysicalDevice},
+  adapter::{Adapter, MemoryTypeId, PhysicalDevice},
+  buffer::Usage as BufferUsage,
   command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
   image::{Extent, Layout, SubresourceRange, Usage, ViewKind},
+  memory::{Properties, Requirements},
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
     AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc,
-    DepthTest, DescriptorSetLayoutBinding, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
+    DepthTest, DescriptorSetLayoutBinding, Element, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
     InputAssemblerDesc, LogicOp, Multisampling, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect,
     ShaderStageFlags, Specialization, StencilTest, VertexBufferDesc, Viewport,
   },
@@ -30,12 +32,11 @@ use gfx_hal::{
   window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, Primitive, QueueFamily, Surface,
 };
-
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
 
 pub const WINDOW_NAME: &str = "Triangle Intro";
 
-pub const VERTEX_SOURCE: &str = "#version 330 core
+pub const VERTEX_SOURCE: &str = "#version 450
 layout (location = 0) in vec2 position;
 
 void main()
@@ -43,19 +44,32 @@ void main()
   gl_Position = vec4(position, 0.0, 1.0);
 }";
 
-pub const FRAGMENT_SOURCE: &str = "#version 330 core
-out vec4 FragColor;
+pub const FRAGMENT_SOURCE: &str = "#version 450
+layout(location = 0) out vec4 color;
 
 void main()
 {
-  FragColor = vec4(1.0);
+  color = vec4(1.0);
 }";
 
+#[derive(Debug, Clone, Copy)]
 pub struct Triangle {
   pub points: [[f32; 2]; 3],
 }
+impl Triangle {
+  pub fn points_flat(self) -> [f32; 6] {
+    let [[a, b], [c, d], [e, f]] = self.points;
+    [a, b, c, d, e, f]
+  }
+}
 
 pub struct HalState {
+  buffer: ManuallyDrop<<back::Backend as Backend>::Buffer>,
+  memory: ManuallyDrop<<back::Backend as Backend>::Memory>,
+  descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
+  pipeline_layout: ManuallyDrop<<back::Backend as Backend>::PipelineLayout>,
+  graphics_pipeline: ManuallyDrop<<back::Backend as Backend>::GraphicsPipeline>,
+  requirements: Requirements,
   current_frame: usize,
   frames_in_flight: usize,
   in_flight_fences: Vec<<back::Backend as Backend>::Fence>,
@@ -95,7 +109,7 @@ impl HalState {
       .ok_or("Couldn't find a graphical Adapter!")?;
 
     // Open A Device and take out a QueueGroup
-    let (device, queue_group) = {
+    let (mut device, queue_group) = {
       let queue_family = adapter
         .queue_families
         .iter()
@@ -276,7 +290,38 @@ impl HalState {
     // Create Our CommandBuffers
     let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
+    // Make dat pipeline
+    let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) = Self::create_pipeline(&mut device, extent, &render_pass)?;
+    const F32_XY_TRIANGLE: u64 = (size_of::<f32>() * 2 * 3) as u64;
+    let (buffer, memory, requirements) = unsafe {
+      let mut buffer = device
+        .create_buffer(F32_XY_TRIANGLE, BufferUsage::VERTEX)
+        .map_err(|_| "Couldn't create a buffer for the vertices")?;
+      let requirements = device.get_buffer_requirements(&buffer);
+      // labeled loops are HAX but this does do it.
+      let memory_type_id = 'label: loop {
+        for memory_type in adapter.physical_device.memory_properties().memory_types.iter() {
+          if requirements.type_mask & (1 << memory_type.heap_index) != 0
+            && memory_type.properties.contains(Properties::CPU_VISIBLE)
+          {
+            break 'label Ok(MemoryTypeId(memory_type.heap_index));
+          }
+        }
+        break 'label Err("Could find a memory type to support the vertex buffer!");
+      }?;
+      let memory = device
+        .allocate_memory(memory_type_id, requirements.size)
+        .map_err(|_| "Couldn't allocate vertex buffer memory")?;
+      device
+        .bind_buffer_memory(&memory, 0, &mut buffer)
+        .map_err(|_| "Couldn't bind the buffer memory!")?;
+      (buffer, memory, requirements)
+    };
+
     Ok(Self {
+      requirements,
+      buffer: ManuallyDrop::new(buffer),
+      memory: ManuallyDrop::new(memory),
       _instance: ManuallyDrop::new(instance),
       _surface: surface,
       _adapter: adapter,
@@ -294,6 +339,9 @@ impl HalState {
       in_flight_fences,
       frames_in_flight,
       current_frame: 0,
+      descriptor_set_layouts,
+      pipeline_layout: ManuallyDrop::new(pipeline_layout),
+      graphics_pipeline: ManuallyDrop::new(graphics_pipeline),
     })
   }
 
@@ -313,7 +361,10 @@ impl HalState {
       .map_err(|_| "Couldn't compile vertex shader!")?;
     let fragment_compile_artifact = compiler
       .compile_into_spirv(FRAGMENT_SOURCE, shaderc::ShaderKind::Fragment, "fragment.frag", "main", None)
-      .map_err(|_| "Couldn't compile fragment shader!")?;
+      .map_err(|e| {
+        error!("{}", e);
+        "Couldn't compile fragment shader!"
+      })?;
     let vertex_shader_module = unsafe {
       device
         .create_shader_module(vertex_compile_artifact.as_binary_u8())
@@ -359,8 +410,19 @@ impl HalState {
         depth_bias: None,
         conservative: false,
       };
-      let vertex_buffers: Vec<VertexBufferDesc> = Vec::new();
-      let attributes: Vec<AttributeDesc> = Vec::new();
+      let vertex_buffers: Vec<VertexBufferDesc> = vec![VertexBufferDesc {
+        binding: 0,
+        stride: (size_of::<f32>() * 2) as u32,
+        rate: 0,
+      }];
+      let attributes: Vec<AttributeDesc> = vec![AttributeDesc {
+        location: 0,
+        binding: 0,
+        element: Element {
+          format: Format::Rg32Float,
+          offset: 0,
+        },
+      }];
 
       let input_assembler = InputAssemblerDesc::new(Primitive::TriangleList);
 
@@ -552,22 +614,38 @@ impl HalState {
       (image_index, image_index as usize)
     };
 
+    // WRITE THE TRIANGLE DATA
+    unsafe {
+      let mut data_target = self
+        .device
+        .acquire_mapping_writer(&self.memory, 0..self.requirements.size)
+        .map_err(|_| "Failed to acquire a memory writer!")?;
+      let points = triangle.points_flat();
+      data_target[..points.len()].copy_from_slice(&points);
+      self
+        .device
+        .release_mapping_writer(data_target)
+        .map_err(|_| "Couldn't release the mapping writer!")?;
+    }
+
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
       const TRIANGLE_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
       buffer.begin(false);
       {
-        let _encoder = buffer.begin_render_pass_inline(
+        let mut encoder = buffer.begin_render_pass_inline(
           &self.render_pass,
           &self.framebuffers[i_usize],
           self.render_area,
           TRIANGLE_CLEAR.iter(),
         );
-        //encoder.bind_graphics_pipeline(&self.pipeline);
-        //let buffers: ArrayList<[_; 1]> = [(&self.buffer, 0)].into();
-        //encoder.bind_vertex_buffers(0, buffers);
-        //encoder.draw(0 .. 3, 0 .. 1);
+        encoder.bind_graphics_pipeline(&self.graphics_pipeline);
+        // Here we must force the Deref impl of ManuallyDrop to play nice.
+        let buffer_ref: &<back::Backend as Backend>::Buffer = &self.buffer;
+        let buffers: ArrayVec<[_; 1]> = [(buffer_ref, 0)].into();
+        encoder.bind_vertex_buffers(0, buffers);
+        encoder.draw(0..3, 0..1);
       }
       buffer.finish();
     }
@@ -599,6 +677,9 @@ impl core::ops::Drop for HalState {
   fn drop(&mut self) {
     let _ = self.device.wait_idle();
     unsafe {
+      for descriptor_set_layout in self.descriptor_set_layouts.drain(..) {
+        self.device.destroy_descriptor_set_layout(descriptor_set_layout)
+      }
       for fence in self.in_flight_fences.drain(..) {
         self.device.destroy_fence(fence)
       }
@@ -616,6 +697,14 @@ impl core::ops::Drop for HalState {
       }
       // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
       use core::ptr::read;
+      self.device.destroy_buffer(ManuallyDrop::into_inner(read(&mut self.buffer)));
+      self.device.free_memory(ManuallyDrop::into_inner(read(&mut self.memory)));
+      self
+        .device
+        .destroy_pipeline_layout(ManuallyDrop::into_inner(read(&mut self.pipeline_layout)));
+      self
+        .device
+        .destroy_graphics_pipeline(ManuallyDrop::into_inner(read(&mut self.graphics_pipeline)));
       self
         .device
         .destroy_command_pool(ManuallyDrop::into_inner(read(&mut self.command_pool)).into_raw());
