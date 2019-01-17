@@ -804,7 +804,7 @@ fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(
   let x = ((local_state.mouse_x / local_state.frame_width) * 2.0) - 1.0;
   let y = ((local_state.mouse_y / local_state.frame_height) * 2.0) - 1.0;
   let triangle = Triangle {
-    points: [[-0.9, 0.9], [-0.9, -0.9], [x as f32, y as f32]],
+    points: [[-0.5, 0.5], [-0.5, -0.5], [x as f32, y as f32]],
   };
   hal_state.draw_triangle_frame(triangle)
 }
