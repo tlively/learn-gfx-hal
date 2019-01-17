@@ -456,20 +456,10 @@ impl HalState {
 
       let baked_states = BakedStates {
         viewport: Some(Viewport {
-          rect: Rect {
-            x: 0,
-            y: 0,
-            w: extent.width as i16,
-            h: extent.width as i16,
-          },
+          rect: extent.to_extent().rect(),
           depth: (0.0..1.0),
         }),
-        scissor: Some(Rect {
-          x: 0,
-          y: 0,
-          w: extent.width as i16,
-          h: extent.height as i16,
-        }),
+        scissor: Some(extent.to_extent().rect()),
         blend_color: None,
         depth_bounds: None,
       };
