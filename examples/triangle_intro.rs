@@ -93,6 +93,7 @@ pub struct HalState {
   _surface: <back::Backend as Backend>::Surface,
   _instance: ManuallyDrop<back::Instance>,
 }
+
 impl HalState {
   /// Creates a new, fully initialized HalState.
   pub fn new(window: &Window) -> Result<Self, &'static str> {
@@ -172,7 +173,13 @@ impl HalState {
           None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
         },
       };
-      let extent = caps.extents.end;
+      let extent = {
+        let window_client_area = window.get_inner_size().ok_or("Window doesn't exist!")?;
+        Extent2D {
+          width: caps.extents.end.width.min(window_client_area.width as u32),
+          height: caps.extents.end.height.min(window_client_area.height as u32),
+        }
+      };
       let image_count = if present_mode == PresentMode::Mailbox {
         (caps.image_count.end - 1).min(3)
       } else {
@@ -667,6 +674,7 @@ impl HalState {
     }
   }
 }
+
 impl core::ops::Drop for HalState {
   /// We have to clean up "leaf" elements before "root" elements. Basically, we
   /// clean up in reverse of the order that we created things.
@@ -719,6 +727,7 @@ pub struct WinitState {
   pub events_loop: EventsLoop,
   pub window: Window,
 }
+
 impl WinitState {
   /// Constructs a new `EventsLoop` and `Window` pair.
   ///
@@ -734,6 +743,7 @@ impl WinitState {
     output.map(|window| Self { events_loop, window })
   }
 }
+
 impl Default for WinitState {
   /// Makes an 800x600 window with the `WINDOW_NAME` value as the title.
   /// ## Panics
@@ -756,6 +766,7 @@ pub struct UserInput {
   pub new_frame_size: Option<(f64, f64)>,
   pub new_mouse_position: Option<(f64, f64)>,
 }
+
 impl UserInput {
   pub fn poll_events_loop(events_loop: &mut EventsLoop) -> Self {
     let mut output = UserInput::default();
@@ -789,6 +800,7 @@ pub struct LocalState {
   pub mouse_x: f64,
   pub mouse_y: f64,
 }
+
 impl LocalState {
   pub fn update_from_input(&mut self, input: UserInput) {
     if let Some(frame_size) = input.new_frame_size {
@@ -837,6 +849,13 @@ fn main() {
     let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
     if inputs.end_requested {
       break;
+    }
+    if inputs.new_frame_size.is_some() {
+      drop(hal_state);
+      hal_state = match HalState::new(&winit_state.window) {
+        Ok(state) => state,
+        Err(e) => panic!(e),
+      };
     }
     local_state.update_from_input(inputs);
     if let Err(e) = do_the_render(&mut hal_state, &local_state) {
