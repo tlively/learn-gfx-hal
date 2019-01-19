@@ -26,8 +26,8 @@ use gfx_hal::{
   pso::{
     AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc,
     DepthTest, DescriptorSetLayoutBinding, Element, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
-    InputAssemblerDesc, LogicOp, Multisampling, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect,
-    ShaderStageFlags, Specialization, StencilTest, VertexBufferDesc, Viewport,
+    InputAssemblerDesc, LogicOp, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect, ShaderStageFlags,
+    Specialization, StencilTest, VertexBufferDesc, Viewport,
   },
   queue::{family::QueueGroup, Submission},
   window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
@@ -304,13 +304,13 @@ impl HalState {
 
     // Build our pipeline and vertex buffer
     let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) = Self::create_pipeline(&mut device, extent, &render_pass)?;
-    const F32_XY_TRIANGLE: u64 = (size_of::<f32>() * 2 * 3) as u64;
     let (buffer, memory, requirements) = unsafe {
+      const F32_XY_TRIANGLE: u64 = (size_of::<f32>() * 2 * 3) as u64;
       let mut buffer = device
         .create_buffer(F32_XY_TRIANGLE, BufferUsage::VERTEX)
         .map_err(|_| "Couldn't create a buffer for the vertices")?;
       let requirements = device.get_buffer_requirements(&buffer);
-      let memory_type_id: MemoryTypeId = adapter
+      let memory_type_id = adapter
         .physical_device
         .memory_properties()
         .memory_types
@@ -415,14 +415,8 @@ impl HalState {
         fragment: Some(fs_entry),
       };
 
-      let rasterizer = Rasterizer {
-        depth_clamping: false,
-        polygon_mode: PolygonMode::Fill,
-        cull_face: Face::NONE,
-        front_face: FrontFace::Clockwise,
-        depth_bias: None,
-        conservative: false,
-      };
+      let input_assembler = InputAssemblerDesc::new(Primitive::TriangleList);
+
       let vertex_buffers: Vec<VertexBufferDesc> = vec![VertexBufferDesc {
         binding: 0,
         stride: (size_of::<f32>() * 2) as u32,
@@ -437,7 +431,20 @@ impl HalState {
         },
       }];
 
-      let input_assembler = InputAssemblerDesc::new(Primitive::TriangleList);
+      let rasterizer = Rasterizer {
+        depth_clamping: false,
+        polygon_mode: PolygonMode::Fill,
+        cull_face: Face::NONE,
+        front_face: FrontFace::Clockwise,
+        depth_bias: None,
+        conservative: false,
+      };
+
+      let depth_stencil = DepthStencilDesc {
+        depth: DepthTest::Off,
+        depth_bounds: false,
+        stencil: StencilTest::Off,
+      };
 
       let blender = {
         let blend_state = BlendState::On {
@@ -450,20 +457,11 @@ impl HalState {
             dst: Factor::Zero,
           },
         };
-
         BlendDesc {
           logic_op: Some(LogicOp::Copy),
           targets: vec![ColorBlendDesc(ColorMask::ALL, blend_state)],
         }
       };
-
-      let depth_stencil = DepthStencilDesc {
-        depth: DepthTest::Off,
-        depth_bounds: false,
-        stencil: StencilTest::Off,
-      };
-
-      let multisampling: Option<Multisampling> = None;
 
       let baked_states = BakedStates {
         viewport: Some(Viewport {
@@ -482,21 +480,12 @@ impl HalState {
           .create_descriptor_set_layout(bindings, immutable_samplers)
           .map_err(|_| "Couldn't make a DescriptorSetLayout")?
       }];
-      let push_constants = Vec::<(ShaderStageFlags, std::ops::Range<u32>)>::new();
+      let push_constants = Vec::<(ShaderStageFlags, core::ops::Range<u32>)>::new();
       let layout = unsafe {
         device
           .create_pipeline_layout(&descriptor_set_layouts, push_constants)
           .map_err(|_| "Couldn't create a pipeline layout")?
       };
-
-      let subpass = Subpass {
-        index: 0,
-        main_pass: render_pass,
-      };
-
-      let flags = PipelineCreationFlags::empty();
-
-      let parent = BasePipeline::None;
 
       let gfx_pipeline = {
         let desc = GraphicsPipelineDesc {
@@ -507,12 +496,15 @@ impl HalState {
           input_assembler,
           blender,
           depth_stencil,
-          multisampling,
+          multisampling: None,
           baked_states,
           layout: &layout,
-          subpass,
-          flags,
-          parent,
+          subpass: Subpass {
+            index: 0,
+            main_pass: render_pass,
+          },
+          flags: PipelineCreationFlags::empty(),
+          parent: BasePipeline::None,
         };
 
         unsafe {
