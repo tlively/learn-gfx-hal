@@ -862,3 +862,5 @@ right, and +Y going from top to bottom. Two points of the triangle are fixed,
 and the third one follows the mouse around as it moves. Looks like this:
 
 ![triangle-intro-complete](images/triangle-intro-complete.png)
+
+You can find the full code file in the `examples/` directory of the repo.
