@@ -84,7 +84,7 @@ impl HalState {
       let queue_group = queues
         .take::<Graphics>(queue_family.id())
         .ok_or("Couldn't take ownership of the QueueGroup!")?;
-      let _ = if queue_group.queues.len() > 0 {
+      if queue_group.queues.len() > 0 {
         Ok(())
       } else {
         Err("The QueueGroup did not have any CommandQueues available!")
@@ -356,13 +356,11 @@ impl core::ops::Drop for HalState {
       use core::ptr::read;
       self
         .device
-        .destroy_command_pool(ManuallyDrop::into_inner(read(&mut self.command_pool)).into_raw());
+        .destroy_command_pool(ManuallyDrop::into_inner(read(&self.command_pool)).into_raw());
       self
         .device
-        .destroy_render_pass(ManuallyDrop::into_inner(read(&mut self.render_pass)));
-      self
-        .device
-        .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
+        .destroy_render_pass(ManuallyDrop::into_inner(read(&self.render_pass)));
+      self.device.destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
       ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
