@@ -18,10 +18,9 @@ install:
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
   - set PATH=%PATH%;C:\msys64\usr\bin
   - set PATH=%PATH%;C:\msys64\mingw64\bin
-  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python3
+  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
   # yes, REALLY do the command twice
-  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python3
-  - mklink C:\msys64\mingw64\bin\python.exe C:\msys64\mingw64\bin\python3.exe
+  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
   - rustc -vV
   - cargo -vV
 
