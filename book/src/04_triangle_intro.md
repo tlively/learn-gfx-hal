@@ -654,7 +654,7 @@ testing right now.
 Note that there's two different structs called `DepthStencilDesc` in the
 `gfx-hal` crate, because they think that prefixing names with modules is somehow
 cool (hint: it's stupid, please stop designing your APIs this way). This time we
-want the one from `gfx_hal::pso`.
+want the one from `gfx_hal::pso` (note: "pso" is "pipeline state object").
 
 ```rust
       let depth_stencil = DepthStencilDesc {
