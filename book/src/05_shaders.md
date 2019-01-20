@@ -276,7 +276,7 @@ The important part is that we have to remember to adjust our pipeline definition
 
 ## Add It To The Shader Code
 
-Adding the push constants to a shader is pretty easy, but there's a few rules.
+Adding the push constants to a shader is pretty easy, but there are few rules.
 All of your push constants appear in a single block with the special layout
 value of `push_constant`. This block isn't `in` or `out`, instead it's
 `uniform`. After that you give a name for the block type, the block itself, and then
