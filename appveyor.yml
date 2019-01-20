@@ -16,11 +16,10 @@ install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
   - rustup-init -y --default-toolchain %channel% --default-host %target%
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
-  - set PATH=%PATH%;C:\msys64\usr\bin
-  - set PATH=%PATH%;C:\msys64\mingw64\bin
-  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
-  # yes, REALLY do the command twice
-  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
+  # https://www.appveyor.com/docs/windows-images-software/
+  # Apparently cmake is already installed
+  # We just pick a version of python to place in the PATH
+  - set PATH=%PATH%;C:\Python26-x64
   - rustc -vV
   - cargo -vV
 
