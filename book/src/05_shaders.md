@@ -285,7 +285,7 @@ before this, it may seem weird, but they think it's normal. We just have to go
 with it.
 
 Since we want a single `f32` to be the time, we define it as a block that holds
-a single `float` value (the GLSL equivalent) which we'll call `time`. Then we
+a single `float` value (the GLSL equivalent) which we call `time`. Then we
 take `push.time` (think of it like they're all stored within a global `push`
 struct), do some funny math on that so that it ends up as a 0.0 to 1.0 value
 (since color channels are supposed to be in that range), and make a vec4. We can
