@@ -656,9 +656,8 @@ As you're probably getting sick of hearing at this point, we're not using depth
 testing right now.
 
 Note that there's two different structs called `DepthStencilDesc` in the
-`gfx-hal` crate, because they think that prefixing names with modules is somehow
-cool (hint: it's stupid, please stop designing your APIs this way). This time we
-want the one from `gfx_hal::pso` (note: "pso" is "pipeline state object").
+`gfx-hal` crate. The one in the `image` module is deprecated old nonsense, we
+want to be sure to import the one from the `pso` module.
 
 ```rust
       let depth_stencil = DepthStencilDesc {
