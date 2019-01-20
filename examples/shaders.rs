@@ -64,7 +64,7 @@ layout (location = 0) out vec4 color;
 
 void main()
 {
-  float time01 = min(abs(sin(push.time * 0.9)), 0.9);
+  float time01 = -0.9 * abs(sin(push.time * 0.9)) + 0.9;
   color = vec4(frag_color,1.0) * vec4(time01,time01,time01,1.0);
 }";
 
@@ -79,11 +79,10 @@ impl Triangle {
   }
   pub fn vertex_attributes(self) -> [f32; 3 * (2 + 3)] {
     let [[a, b], [c, d], [e, f]] = self.points;
-    // red
     [
-      a, b, 1.0, 0.0, 0.0, // green
-      c, d, 0.0, 1.0, 0.0, // blue
-      e, f, 0.0, 0.0, 1.0,
+      a, b, 1.0, 0.0, 0.0, // red
+      c, d, 0.0, 1.0, 0.0, // green
+      e, f, 0.0, 0.0, 1.0, // blue
     ]
   }
 }
