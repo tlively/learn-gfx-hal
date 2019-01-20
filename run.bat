@@ -1,1 +1,1 @@
-cargo run --example clear_the_screen --features="dx12"
+cargo run --example triangle_intro --features="dx12"

@@ -2,11 +2,12 @@
 [![AppVeyor](https://ci.appveyor.com/api/projects/status/39wvbxxstqjd2vi8?svg=true)](https://ci.appveyor.com/project/Lokathor/learn-gfx-hal)
 [![travis.ci](https://travis-ci.org/Lokathor/learn-gfx-hal.svg?branch=master)](https://travis-ci.org/Lokathor/learn-gfx-hal)
 
-![gfx-hal:0.1](https://img.shields.io/badge/gfx--hal-0.1-blue.svg)
+[![gfx-hal:0.1](https://img.shields.io/badge/gfx--hal-0.1-blue.svg)](https://docs.rs/gfx-hal)
 
 # learn-gfx-hal
 
-Step by step tutorials for using the `gfx-hal` crate.
+Step by step tutorials for using the [gfx-hal](https://github.com/gfx-rs/gfx)
+crate.
 
 The tutorials all target the current version _on crates.io_, not on the master
 branch of git. At the time of me writing this that means `0.1.0`.
@@ -23,6 +24,22 @@ from.
   rendered to HTML with [mdbook](https://github.com/rust-lang-nursery/mdBook),
   and the [GitHub Pages site](https://lokathor.github.io/learn-gfx-hal/) for
   this repository hosts a rendered version of the master branch.
+
+## Requirements
+
+Uses [shaderc-rs](https://github.com/google/shaderc-rs), please follow [their
+setup instructions](https://github.com/google/shaderc-rs#setup).
+
+* Regarding `msys2` on Windows: Note that the _first_ time you run the `pacman`
+  command they list _it doesn't install the packages_. Instead it actually just
+  installs the latest pacman and msys files. You have to then run the `pacman`
+  command again to make it actually download the stuff (and if you ran it from
+  within the msys2 terminal you have to close that terminal and open a new one).
+  * Yes, that is totally stupid, but it is also real advice that you must follow
+    in this, the year of our lord two thousand and nineteen, if you want to
+    program 3D graphics programs on windows.
+* When they say "the msys2 mingw64 binary path" they mean `C:\msys64\usr\bin`
+  and `C:\msys64\mingw64\bin` (assuming that you installed to `C:\msys64`).
 
 ## Contribution
 

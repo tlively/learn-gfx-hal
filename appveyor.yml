@@ -5,33 +5,22 @@ os: Visual Studio 2015
 
 environment:
   matrix:
-    # MSVC
+    # MSVC, only bother to verify stable
     - channel: stable
       target: x86_64-pc-windows-msvc
     - channel: stable
       target: i686-pc-windows-msvc
-    - channel: nightly
-      target: x86_64-pc-windows-msvc
-    - channel: nightly
-      target: i686-pc-windows-msvc
-#    # GNU
-#    - channel: stable
-#      target: x86_64-pc-windows-gnu
-#    - channel: stable
-#      target: i686-pc-windows-gnu
-#    - channel: nightly
-#      target: x86_64-pc-windows-gnu
-#    - channel: nightly
-#      target: i686-pc-windows-gnu
-
-matrix:
-  allow_failures:
-    - channel: nightly
+    # GNU is not supported by shaderc-rs :(
 
 install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
   - rustup-init -y --default-toolchain %channel% --default-host %target%
   - set PATH=%PATH%;%USERPROFILE%\.cargo\bin
+  - set PATH=%PATH%;C:\msys64\usr\bin
+  - set PATH=%PATH%;C:\msys64\mingw64\bin
+  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
+  # yes, REALLY do the command twice
+  - pacman --noconfirm -Syu mingw-w64-x86_64-cmake mingw-w64-x86_64-python2
   - rustc -vV
   - cargo -vV
 
@@ -40,6 +29,4 @@ build: false
 
 test_script:
   - cargo build --examples --features="vulkan"
-  - cargo build --examples --features="vulkan" --release
   - cargo build --examples --features="dx12"
-  - cargo build --examples --features="dx12" --release
