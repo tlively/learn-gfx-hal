@@ -64,7 +64,7 @@ layout (location = 0) out vec4 color;
 
 void main()
 {
-  float time01 = abs(sin(push.time));
+  float time01 = min(abs(sin(push.time * 0.9)), 0.9);
   color = vec4(frag_color,1.0) * vec4(time01,time01,time01,1.0);
 }";
 
