@@ -99,7 +99,7 @@ probably good enough so we'll go with that in our shaders.
 
 # Adding A Vertex Attribute For Color
 
-So what's any of that mean for us? Well first of all we can add a color
+So what does any of that mean for us? Well first of all we can add a color
 attribute to our vertex data.
 
 ## Update Shader Code
