@@ -514,7 +514,7 @@ impl HalState {
           .create_descriptor_set_layout(bindings, immutable_samplers)
           .map_err(|_| "Couldn't make a DescriptorSetLayout")?
       }];
-      let push_constants = Vec::<(ShaderStageFlags, core::ops::Range<u32>)>::new();
+      let push_constants = vec![(ShaderStageFlags::FRAGMENT, 0..1)];
       let layout = unsafe {
         device
           .create_pipeline_layout(&descriptor_set_layouts, push_constants)
