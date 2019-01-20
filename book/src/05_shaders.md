@@ -281,7 +281,7 @@ All of your push constants appear in a single block with the special layout
 value of `push_constant`. This block isn't `in` or `out`, instead it's
 `uniform`. After that you give a name for the block type, the block itself, and then
 the name that we're going to access it under. If you haven't programmed in C
-before this might seem weird, but they think it's normal. We just have to go
+before this, it may seem weird, but they think it's normal. We just have to go
 with it.
 
 Since we want a single `f32` to be the time, we define it as a block that holds
