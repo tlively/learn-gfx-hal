@@ -162,7 +162,7 @@ pub fn draw_triangle_frame(&mut self, triangle: Triangle) -> Result<(), &'static
 
 Now you'd think "hey can't we abstract the commonalities here? Well, maybe but
 you can't really do it with a function and a closure because lifetimes and
-function boarders don't play particularly nice in Rust. Our draw code
+function borders don't play particularly nice in Rust. Our draw code
 unfortunately really relies on having a lot of "split borrows" (where the borrow
 is just on one field at a time) instead of struct-wide borrows (eg: `&self` or
 `&mut self`). Or you could do it as a macro maybe? Either way it'd be probably
@@ -323,7 +323,7 @@ do precisely.
 
 If we review the
 [Device](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html) trait
-we'll see that each of these things. Comes from a `create_foo` method on the
+we'll see that each of these things comes from a `create_foo` method on the
 Device, so we'll need to add them to the Drop code for `HalState`. I'll assume
 that you can do that yourself by now, you just do the same thing as before. 1)
 store it as a ManuallyDrop, 2) use `read` to pseudo-clone it and then pass that
@@ -606,15 +606,16 @@ more than one fragment can end up in the same pixel, and then they'll get
 blended together. You don't know what the pixel will finally be until all of the
 fragments that touch that pixel are done.
 
-The actual data that the fragment shader gets is whatever the vertex shader
-decides to output. There's no "FragmentShaderDesc" type, because by that part of
-the process the CPU isn't passing data into the pipeline. If you have data that
-you want the fragment shader to see that the vertex shader doesn't care about
-you pass it to the vertex shader and then have the vertex shader code just pass
-it strait along to the fragment shader.
+The actual data that the fragment shader gets is mostly whatever the previous
+stages of the pipeline have output. There's no specific format and there's no
+"FragmentShaderDesc" type that you set up on the CPU side. It's all defined in
+your shader files. Any per-fragment values have to come through the previous
+stages of the pipeline, starting back at the Vertex Shader. There is the ability
+to have global, read only data (as a Push Constant or Uniform), but any
+per-fragment data has to come through the whole pipeline process.
 
-A single geometry element can also have many fragments. Imagine a triangle that
-goes from the bottom left, to the top left, to the top right. There's only three
+A single geometry element can have many fragments. Imagine a triangle that goes
+from the bottom left, to the top left, to the top right. There's only three
 vertices, but _half the screen_ is covered in fragments. The pipeline
 automatically interpolates the values for any fragment that's not directly from
 a vertex (which is almost every fragment ever, honestly). That might sound kinda
@@ -628,12 +629,15 @@ pick up where a long line is jumping from one pixel to the next if it's almost
 but not quite vertical or horizontal. Fixing that is called "anti-aliasing", and
 there's more than one way to do it.
 
-All forms of anti-aliasing basically involve throwing more computational power
-at the problem to make it go away. Naturally you want to allow for a user to
-turn such a feature off if they don't have as good of a graphics card. For now
-we won't include multisampling at all. Adding it in touches just a little bit of
-the swapchain, the render pass, the pipeline, anything that has to do with
-images. We can do that as lesson of its own soon.
+The pipeline in `gfx-hal` has a parameter for "multisampling", where instead of
+computing fragments on a pixel basis, you compute them on a sub-pixel basis and
+average the results. You're basically just throwing computational power at the
+problem to try and get a more accurate result. Naturally, if you do enable
+multisampling, you want to allow for a user to turn such a feature off if they
+don't have as good of a graphics card. We won't enable it for now, because
+adding it in touches just a little bit of the swapchain, the render pass, the
+pipeline, anything that has to do with images. We can do that as lesson of its
+own soon.
 
 ### Depth Testing
 
