@@ -1,1 +1,1 @@
-cargo run --example triangle_intro --features="vulkan"
+cargo run --example shaders --features="vulkan"

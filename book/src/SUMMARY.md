@@ -5,3 +5,4 @@
 * [Opening A Window](02_opening_a_window.md)
 * [Clear The Window](03_clear_the_window.md)
 * [Triangle Intro](04_triangle_intro.md)
+* [Shaders](05_shaders.md)

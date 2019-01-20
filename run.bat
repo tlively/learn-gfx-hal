@@ -1,1 +1,1 @@
-cargo run --example triangle_intro --features="dx12"
+cargo run --example shaders --features="dx12"
