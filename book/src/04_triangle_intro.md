@@ -42,24 +42,32 @@ impl HalState {
 }
 ```
 
-The ability to draw exactly one triangle isn't very useful on its own. The
-`draw_clear_frame` we could potentially use in the future (during a brief
-loading screen or something), but a method to draw one triangle doesn't have
-much long term use. In fact we will probably remove the method entirely in later
-lessons as our program evolves, rather than try to keep such a useless method
-updated through the changes we add from lesson to lesson.
+The ability to draw _exactly one_ triangle isn't very useful on its own. What I
+mean is that we could potentially use the `draw_clear_frame` method in the
+future even in a "complete program". We could use it during a brief loading
+screen or something. However, `draw_triangle_frame` doesn't really have a good
+shelf life. In a complete program we'd want to have a way to specify an entire
+scene of models, each composed of many triangles. In fact, if properly
+supporting `draw_triangle_frame` in future lessons gives us any trouble at all,
+we'll just delete it instead. It's seriously that impractical.
 
-Why add a thing only to take it away? Because demanding of ourselves to draw a
-single triangle, of any quality, forces us to put in to place many more parts of
-our overall "render pipeline". The rendering pipeline is what's here to stay. A
-**complete** rendering pipeline is _even more complex_ than a complete
-Swapchain. It's a many lesson long process. We've seen only a hint of it in the
-last lesson. We'll add some more in this lesson. We'll expand it along in future
-lessons.
+Why add a thing only to then take it away? Because demanding of ourselves to
+draw a single triangle, of any quality, forces us to put in to place many more
+parts of our overall "rendering pipeline". The rendering pipeline is what's
+_really_ here to stay. A **complete** rendering pipeline with all the bells and
+whistles is _even more complex_ than a complete Swapchain like we did last time.
+It's a many lesson long process to fully understand. In fact, the Swapchain is
+one portion of the overall rendering pipeline. So we saw a bit of the whole
+picture in the last lesson, we'll add more this lesson, and we'll keep expanding
+and refining our process in each future lesson.
 
-One might argue that the entire field of 3D programming is just an unending
-process of learning more and more about how you can twist the rendering pipeline
-to do exactly what you want, when you want, as fast as possible.
+The entire field of 3D programming is just an unending process of learning more
+and more about how you can twist the rendering pipeline to do exactly what you
+want, when you want, as fast as possible.
+
+If that concept doesn't excite and interest you, best to get out now. No shame
+in wanting to code other parts of a program instead, but that's really all we'll
+be doing, so save yourself the time if that's not what you care about.
 
 ### Terminology Sidebar: Immediate vs Retained
 
@@ -161,8 +169,48 @@ is just on one field at a time) instead of struct-wide borrows (eg: `&self` or
 quite a bit of work for not too much gained. We don't want to over abstract
 until we see how the code is growing.
 
-All that changes is that instead of starting a CommandBuffer and then recording
-nothing at all, we'll actually record something this time.
+## Upload That Triangle Data
+
+To actually place data for the triangle into the vertex buffer we need a mapping
+writer. Unfortunately, this is _basically_ a reference, which means that it has
+a lifetime linked to a particular blob of `Memory` from the GPU, which means
+that we can't really store it in the same struct that holds the handle to the
+Memory because Rust is just bad at self-referential struct things. Instead,
+we'll get a mapping writer, use it, and then destroy it.
+
+(Hint: if you already read [The
+Rustonomicon](https://doc.rust-lang.org/nomicon/) like I told you to in the
+Introduction, then you already know how to cheese it and avoid this limitation
+at the small cost of _massive_ unsafety, should you want to. If you need _me_ to
+tell you how, then you're not ready to do it.)
+
+```rust
+    // WRITE THE TRIANGLE DATA
+    unsafe {
+      let mut data_target = self
+        .device
+        .acquire_mapping_writer(&self.memory, 0..self.requirements.size)
+        .map_err(|_| "Failed to acquire a memory writer!")?;
+      let points = triangle.points_flat();
+      data_target[..points.len()].copy_from_slice(&points);
+      self
+        .device
+        .release_mapping_writer(data_target)
+        .map_err(|_| "Couldn't release the mapping writer!")?;
+    }
+```
+
+As you'll see in future lessons, it's actually very rare to update all the
+vertex data of a model every frame. Usually you set it once and then use
+"transforms" to move the model around within the scene, without actually
+affecting the vertex data. For now, we'll just push fresh vertex data each
+frame.
+
+## Record The Commands
+
+All that really changes here compared to `draw_clear_frame` is that instead of
+starting a CommandBuffer and then recording _nothing_, we'll actually record
+something this time.
 
 ```rust
     // RECORD COMMANDS
