@@ -12,7 +12,10 @@ use gfx_backend_metal as back;
 use gfx_backend_vulkan as back;
 
 use arrayvec::ArrayVec;
-use core::mem::{size_of, ManuallyDrop};
+use core::{
+  mem::{size_of, ManuallyDrop},
+  ops::Deref,
+};
 use gfx_hal::{
   adapter::{Adapter, MemoryTypeId, PhysicalDevice},
   buffer::{IndexBufferView, Usage as BufferUsage},
@@ -35,7 +38,7 @@ use gfx_hal::{
     CommandQueue, Submission,
   },
   window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
-  Backend, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
+  Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use std::time::Instant;
 use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
@@ -116,8 +119,8 @@ impl Quad {
     #[cfg_attr(rustfmt, rustfmt_skip)]
     [
     // X    Y    R    G    B                  U    V
-      x  , y+h, 1.0, 0.0, 0.0, /* red     */ 0.0, 0.0, /* bottom left */
-      x  , y  , 0.0, 1.0, 0.0, /* green   */ 0.0, 1.0, /* top left */
+      x  , y+h, 1.0, 0.0, 0.0, /* red     */ 0.0, 1.0, /* bottom left */
+      x  , y  , 0.0, 1.0, 0.0, /* green   */ 0.0, 0.0, /* top left */
       x+w, y  , 0.0, 0.0, 1.0, /* blue    */ 1.0, 0.0, /* bottom right */
       x+w, y+h, 1.0, 0.0, 1.0, /* magenta */ 1.0, 1.0, /* top right */
     ]
@@ -171,11 +174,11 @@ impl<B: Backend> BufferBundle<B> {
 }
 
 pub struct LoadedImage<B: Backend> {
-  image: ManuallyDrop<B::Image>,
-  _requirements: Requirements,
-  memory: ManuallyDrop<B::Memory>,
-  image_view: ManuallyDrop<B::ImageView>,
-  sampler: ManuallyDrop<B::Sampler>,
+  pub image: ManuallyDrop<B::Image>,
+  pub requirements: Requirements,
+  pub memory: ManuallyDrop<B::Memory>,
+  pub image_view: ManuallyDrop<B::ImageView>,
+  pub sampler: ManuallyDrop<B::Sampler>,
 }
 impl<B: Backend> LoadedImage<B> {
   pub fn new<C: Capability + Supports<Transfer>, D: Device<B>>(
@@ -217,7 +220,8 @@ impl<B: Backend> LoadedImage<B> {
         .iter()
         .enumerate()
         .find(|&(id, memory_type)| {
-          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE)
+          // BIG NOTE: THIS IS DEVICE LOCAL NOT CPU VISIBLE
+          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::DEVICE_LOCAL)
         })
         .map(|(id, _)| MemoryTypeId(id))
         .ok_or("Couldn't find a memory type to support the image!")?;
@@ -326,7 +330,7 @@ impl<B: Backend> LoadedImage<B> {
 
       Ok(Self {
         image: ManuallyDrop::new(the_image),
-        _requirements: requirements,
+        requirements,
         memory: ManuallyDrop::new(memory),
         image_view: ManuallyDrop::new(image_view),
         sampler: ManuallyDrop::new(sampler),
@@ -349,6 +353,8 @@ pub struct HalState {
   indexes: BufferBundle<back::Backend>,
   texture: LoadedImage<back::Backend>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
+  descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
+  descriptor_set: ManuallyDrop<<back::Backend as Backend>::DescriptorSet>,
   pipeline_layout: ManuallyDrop<<back::Backend as Backend>::PipelineLayout>,
   graphics_pipeline: ManuallyDrop<<back::Backend as Backend>::GraphicsPipeline>,
   current_frame: usize,
@@ -579,7 +585,8 @@ impl HalState {
     let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
     // Build our pipeline and vertex buffer
-    let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) = Self::create_pipeline(&mut device, extent, &render_pass)?;
+    let (descriptor_set_layouts, descriptor_pool, descriptor_set, pipeline_layout, gfx_pipeline) =
+      Self::create_pipeline(&mut device, extent, &render_pass)?;
 
     const F32_XY_RGB_UV_QUAD: usize = size_of::<f32>() * (2 + 3 + 2) * 4;
     let vertices = BufferBundle::new(&adapter, &mut device, F32_XY_RGB_UV_QUAD, BufferUsage::VERTEX)?;
@@ -595,11 +602,39 @@ impl HalState {
       image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
     )?;
 
+    // Image Upload Steps Continued
+
+    // 4. You create the actual descriptors which you want to write into the
+    //    allocated descriptor set (in this case an image and a sampler)
+    // this was part of the LoadedImage process
+
+    // 5. You write the descriptors into the descriptor set using
+    //    write_descriptor_sets which you pass a set of DescriptorSetWrites
+    //    which each write in one or more descriptors to the set
+    unsafe {
+      device.write_descriptor_sets(vec![
+        gfx_hal::pso::DescriptorSetWrite {
+          set: &descriptor_set,
+          binding: 0,
+          array_offset: 0,
+          descriptors: Some(gfx_hal::pso::Descriptor::Image(texture.image_view.deref(), Layout::Undefined)),
+        },
+        gfx_hal::pso::DescriptorSetWrite {
+          set: &descriptor_set,
+          binding: 1,
+          array_offset: 0,
+          descriptors: Some(gfx_hal::pso::Descriptor::Sampler(texture.sampler.deref())),
+        },
+      ]);
+    }
+
     Ok(Self {
       creation_instant: Instant::now(),
       vertices,
       indexes,
       texture,
+      descriptor_pool: ManuallyDrop::new(descriptor_pool),
+      descriptor_set: ManuallyDrop::new(descriptor_set),
       _instance: ManuallyDrop::new(instance),
       _surface: surface,
       _adapter: adapter,
@@ -619,7 +654,7 @@ impl HalState {
       current_frame: 0,
       descriptor_set_layouts,
       pipeline_layout: ManuallyDrop::new(pipeline_layout),
-      graphics_pipeline: ManuallyDrop::new(graphics_pipeline),
+      graphics_pipeline: ManuallyDrop::new(gfx_pipeline),
     })
   }
 
@@ -629,6 +664,8 @@ impl HalState {
   ) -> Result<
     (
       Vec<<back::Backend as Backend>::DescriptorSetLayout>,
+      <back::Backend as Backend>::DescriptorPool,
+      <back::Backend as Backend>::DescriptorSet,
       <back::Backend as Backend>::PipelineLayout,
       <back::Backend as Backend>::GraphicsPipeline,
     ),
@@ -657,7 +694,7 @@ impl HalState {
         .create_shader_module(fragment_compile_artifact.as_binary_u8())
         .map_err(|_| "Couldn't make the fragment module")?
     };
-    let (descriptor_set_layouts, pipeline_layout, gfx_pipeline) = {
+    let (descriptor_set_layouts, descriptor_pool, descriptor_set, layout, gfx_pipeline) = {
       let (vs_entry, fs_entry) = (
         EntryPoint {
           entry: "main",
@@ -759,6 +796,8 @@ impl HalState {
         depth_bounds: None,
       };
 
+      // 1. you make a DescriptorSetLayout which is the layout of one descriptor
+      //    set
       let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> = vec![unsafe {
         device
           .create_descriptor_set_layout(
@@ -782,6 +821,36 @@ impl HalState {
           )
           .map_err(|_| "Couldn't make a DescriptorSetLayout")?
       }];
+
+      // 2. you create a descriptor pool, and when making that descriptor pool
+      //    you specify how many sets you want to be able to allocate from the
+      //    pool, as well as the maximum number of each kind of descriptor you
+      //    want to be able to allocate from that pool, total, for all sets.
+      let mut descriptor_pool = unsafe {
+        device
+          .create_descriptor_pool(
+            1, // sets
+            &[
+              gfx_hal::pso::DescriptorRangeDesc {
+                ty: gfx_hal::pso::DescriptorType::SampledImage,
+                count: 1,
+              },
+              gfx_hal::pso::DescriptorRangeDesc {
+                ty: gfx_hal::pso::DescriptorType::Sampler,
+                count: 1,
+              },
+            ],
+          )
+          .map_err(|_| "Couldn't create a descriptor pool!")?
+      };
+
+      // 3. you allocate said descriptor set from the pool you made earlier
+      let descriptor_set = unsafe {
+        descriptor_pool
+          .allocate_set(&descriptor_set_layouts[0])
+          .map_err(|_| "Couldn't make a Descriptor Set!")?
+      };
+
       let push_constants = vec![(ShaderStageFlags::FRAGMENT, 0..1)];
       let layout = unsafe {
         device
@@ -817,7 +886,7 @@ impl HalState {
         }
       };
 
-      (descriptor_set_layouts, layout, gfx_pipeline)
+      (descriptor_set_layouts, descriptor_pool, descriptor_set, layout, gfx_pipeline)
     };
 
     unsafe {
@@ -825,7 +894,7 @@ impl HalState {
       device.destroy_shader_module(fragment_shader_module);
     }
 
-    Ok((descriptor_set_layouts, pipeline_layout, gfx_pipeline))
+    Ok((descriptor_set_layouts, descriptor_pool, descriptor_set, layout, gfx_pipeline))
   }
 
   /// Draw a frame that's just cleared to the color specified.
@@ -932,7 +1001,7 @@ impl HalState {
         .device
         .acquire_mapping_writer(&self.indexes.memory, 0..self.indexes.requirements.size)
         .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
-      const INDEX_DATA: &[u16] = &[0, 1, 3, 2, 3, 1];
+      const INDEX_DATA: &[u16] = &[0, 1, 2, 2, 3, 0];
       data_target[..INDEX_DATA.len()].copy_from_slice(&INDEX_DATA);
       self
         .device
@@ -957,15 +1026,16 @@ impl HalState {
           TRIANGLE_CLEAR.iter(),
         );
         encoder.bind_graphics_pipeline(&self.graphics_pipeline);
-        // Here we must force the Deref impl of ManuallyDrop to play nice.
-        let vertex_buffer_ref: &<back::Backend as Backend>::Buffer = &self.vertices.buffer;
-        let vertex_buffers: ArrayVec<[_; 1]> = [(vertex_buffer_ref, 0)].into();
+        let vertex_buffers: ArrayVec<[_; 1]> = [(self.vertices.buffer.deref(), 0)].into();
         encoder.bind_vertex_buffers(0, vertex_buffers);
         encoder.bind_index_buffer(IndexBufferView {
           buffer: &self.indexes.buffer,
           offset: 0,
           index_type: IndexType::U16,
         });
+        // 6. You actually bind the descriptor set in the command buffer before
+        //    the draw call using bind_graphics_descriptor_sets
+        encoder.bind_graphics_descriptor_sets(&self.pipeline_layout, 0, Some(self.descriptor_set.deref()), &[]);
         encoder.push_graphics_constants(&self.pipeline_layout, ShaderStageFlags::FRAGMENT, 0, &[time_f32.to_bits()]);
         encoder.draw_indexed(0..6, 0, 0..1);
       }
@@ -1019,14 +1089,14 @@ impl core::ops::Drop for HalState {
         self.device.destroy_image_view(image_view);
       }
       // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
-      {
-        // once again, an explicit bind is needed to make Deref play nice.
-        let device_ref: &back::Device = &self.device;
-        self.vertices.manually_drop(device_ref);
-        self.indexes.manually_drop(device_ref);
-        self.texture.manually_drop(device_ref);
-      }
+      self.vertices.manually_drop(self.device.deref());
+      self.indexes.manually_drop(self.device.deref());
+      self.texture.manually_drop(self.device.deref());
       use core::ptr::read;
+      // this implicitly frees all descriptor sets from this pool
+      self
+        .device
+        .destroy_descriptor_pool(ManuallyDrop::into_inner(read(&self.descriptor_pool)));
       self
         .device
         .destroy_pipeline_layout(ManuallyDrop::into_inner(read(&self.pipeline_layout)));
