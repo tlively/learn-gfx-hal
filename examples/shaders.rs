@@ -882,6 +882,7 @@ fn main() {
       break;
     }
     if inputs.new_frame_size.is_some() {
+      debug!("Window changed size, restarting HalState...");
       drop(hal_state);
       hal_state = match HalState::new(&winit_state.window) {
         Ok(state) => state,
@@ -891,7 +892,12 @@ fn main() {
     local_state.update_from_input(inputs);
     if let Err(e) = do_the_render(&mut hal_state, &local_state) {
       error!("Rendering Error: {:?}", e);
-      break;
+      debug!("Auto-restarting HalState...");
+      drop(hal_state);
+      hal_state = match HalState::new(&winit_state.window) {
+        Ok(state) => state,
+        Err(e) => panic!(e),
+      };
     }
   }
 }
