@@ -451,7 +451,10 @@ uploaded with a vertical flip applied.
 
 Now we make an Image on the Device with [create_image](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_image).
 
-* `kind` just means the dimensions of the image
+* `kind` looks like just the dimensionality of the image, but it's [actually
+  complex enough to need a huge
+  table](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkImageViewCreateInfo.html)
+  of what's allowed to go with what.
 * `mip_levels` is for when you do mip mapping to have more than one level of
   detail for the image. We won't do that yet, so just leave it at 1.
 * `format` is the pixel format of the image. This might not match the pixel
