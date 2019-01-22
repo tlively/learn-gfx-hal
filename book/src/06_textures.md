@@ -396,15 +396,15 @@ you'd need.
 
 ## Make A Staging Buffer
 
-In the past we've been able to map memory which we can directly write into
-our buffers. This is because we've been using CPU_VISIBLE memory, which for most
-Vulkan vendors means the memory being used is in CPU RAM, not on VRAM which is on
-the graphics device. If we used this for an image, sampling (reading) that image would
-be very, very slow. So instead, what we want to do is make an image that uses DEVICE_LOCAL
-memory, which will be much faster RAM which is on the GPU itself, but it also means that
-we can't map the memory and copy to it directly. We have to make a "staging buffer", copy our
-image into that, then tell the GPU to copy from the staging buffer into the
-actual image memory. Yes, really.
+In the past we've been able to map memory which we can directly write into our
+buffers. This is because we've been using CPU_VISIBLE memory, which for most
+Vulkan vendors means the memory being used is in CPU RAM, not on VRAM which is
+on the graphics device. If we used this for an image, sampling (reading) that
+image would be very, very slow. So instead, what we want to do is make an image
+that uses DEVICE_LOCAL memory, which will be much faster RAM which is on the GPU
+itself, but it also means that we can't map the memory and copy to it directly.
+We have to make a "staging buffer", copy our image into that, then tell the GPU
+to copy from the staging buffer into the actual image memory. Yes, really.
 
 For the staging buffer we can use the `BufferBundle` type, and we want the usage
 to be "transfer source".
@@ -420,17 +420,18 @@ to be "transfer source".
 
 Now that our staging buffer is created, we can "stage" the data into it.
 
-Except that instead of just copying the image data in pixel-for-pixel, we want to
-respect something called 'row pitch'. The GPU will often prefer to have some
+Except that instead of just copying the image data in pixel-for-pixel, we want
+to respect something called 'row pitch'. The GPU will often prefer to have some
 extra empty memory space between the data for each row of an image. Usually when
-storing an image, you'd just keep each pixel bumped directly up to the next, with
-no space between rows. In this case, we want to keep each pixel next to its
+storing an image, you'd just keep each pixel bumped directly up to the next,
+with no space between rows. In this case, we want to keep each pixel next to its
 neighbors within the same row, but we want to have some number of empty bytes
 between each row.
 
 So we have to be very round-about and copy one row of pixels at a time. First we
-query the graphics device for its 'limits' which will tell us its preferred
-row pitch, then we use that to copy in the data, leaving that 'pitch' between each row.
+query the graphics device for its 'limits' which will tell us its preferred row
+pitch, then we use that to copy in the data, leaving that 'pitch' between each
+row.
 
 ```rust
       // 2. use mapping writer to put the image data into that buffer
@@ -532,27 +533,28 @@ We don't use it immediately, but later on we'll need to have both an ImageView
 and Sampler for our Image, so we'll make them right now and store them in the
 `LoadedImage` struct.
 
-In gfx-hal, there are basically three 'levels' of both image and buffer resources.
-First there's the Memory, which is a handle to a specific piece of device memory,
-which is where the raw data for that resource is stored. Then there's the `Buffer`
-or `Image` itself, which is information about the size, planned usage, and any special
-properties of the resource contained in the backing memory. Finally there is the
-resource view. In this case, that's an `ImageView`, but there are also `BufferView`s,
-we just haven't had a need for them yet. The view is like a window into a resource,
-it describes how (the type of data, pixel format, etc) and which part of the resource
-to view.
+In gfx-hal, there are basically three 'levels' of both image and buffer
+resources. First there's the Memory, which is a handle to a specific piece of
+device memory, which is where the raw data for that resource is stored. Then
+there's the `Buffer` or `Image` itself, which is information about the size,
+planned usage, and any special properties of the resource contained in the
+backing memory. Finally there is the resource view. In this case, that's an
+`ImageView`, but there are also `BufferView`s, we just haven't had a need for
+them yet. The view is like a window into a resource, it describes how (the type
+of data, pixel format, etc) and which part of the resource to view.
 
-However, in order to use an image in a shader, we also want to use what is called a
-`Sampler`. Often times in a graphics program, we will not want to get the direct value
-of a specific pixel in a texture, but rather we want to get the color of a texture
-at some *relative* point. This relative point will often be in between exact pixels.
-The sampler describes how we want gfx-hal to interpolate between the colors of
-a texture to return a final single color when the place we are sampling is in
-between pixels. Samplers in gfx-hal are created and used in a similar way to other
-resources, like images and buffers, but in reality they arejust a struct of a few
-settings, most importantly the interpolation mode as I said before, and the
-behavior we want if the sampling point we give is off the image: Do we wan to
-wrap it around back to the front of the image? Just use the edge pixel color? Etc.
+However, in order to use an image in a shader, we also want to use what is
+called a `Sampler`. Often times in a graphics program, we will not want to get
+the direct value of a specific pixel in a texture, but rather we want to get the
+color of a texture at some *relative* point. This relative point will often be
+in between exact pixels. The sampler describes how we want gfx-hal to
+interpolate between the colors of a texture to return a final single color when
+the place we are sampling is in between pixels. Samplers in gfx-hal are created
+and used in a similar way to other resources, like images and buffers, but in
+reality they arejust a struct of a few settings, most importantly the
+interpolation mode as I said before, and the behavior we want if the sampling
+point we give is off the image: Do we wan to wrap it around back to the front of
+the image? Just use the edge pixel color? Etc.
 
 ```rust
       // 5. create image view and sampler
@@ -611,12 +613,14 @@ In addition, we transfer the `Access` type from none to `TRANSFER_WRITE`, which
 tells the GPU the type of access which we are going to be performing on this
 resource for now.
 
-It's important that we transition resources which we want to use in specific ways
-to the proper Layout and Access type, because performing operations which are not
-supported by the Layout/Access that a resource currently has is undefined behavior
-or an explicit error (oh no!). You can use the Vulkan spec for which operations
-are supported by each [Layout](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkImageLayout.html)
-and [Access](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkAccessFlagBits.html).
+It's important that we transition resources which we want to use in specific
+ways to the proper Layout and Access type, because performing operations which
+are not supported by the Layout/Access that a resource currently has is
+undefined behavior or an explicit error (oh no!). You can use the Vulkan spec
+for which operations are supported by each
+[Layout](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkImageLayout.html)
+and
+[Access](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkAccessFlagBits.html).
 
 ```rust
       // 7. Use a pipeline barrier to transition the image from empty/undefined
@@ -674,9 +678,9 @@ Our next command is to actually do that copy from the staging buffer (in
 Just like there's a layout for being an optimal destination, there's also a
 layout for being an optimal place for a shader to read from, and an access type
 for being read from a shader. We've gotta issue a pipeline barrier for this
-transition too. There are other ways to transition resources which should be used
-instead of pipeline barriers when possible (specifically, between
-render Subpasses), but in this case pipeline barriers are required.
+transition too. There are other ways to transition resources which should be
+used instead of pipeline barriers when possible (specifically, between render
+Subpasses), but in this case pipeline barriers are required.
 
 ```rust
       // 9. use pipeline barrier to transition the image to SHADER_READ access/
@@ -749,14 +753,14 @@ have to make some changes to `create_pipeline`.
 
 ## DescriptorSetLayout
 
-First we need a DescriptorSetLayout, which defines the *layout* of the resources,
-which we will later bind as `Descriptors`, which we can access in the shader. Note
-that we are *not* yet binding the *actual resources* which we want to use, only
-describing the kind and place in which those resources will have to go. As you'll
-see later, as long as we follow this layout, we can bind multiple different resources
-into the same slots. We need a SampledImage and a Sampler. Like with other shader
-stuff, the `binding` will be important later on in the shader itself, the numbers
-we pick here will have to match the numbers there.
+First we need a DescriptorSetLayout, which defines the *layout* of the
+resources, which we will later bind as `Descriptors`, which we can access in the
+shader. Note that we are *not* yet binding the *actual resources* which we want
+to use, only describing the kind and place in which those resources will have to
+go. As you'll see later, as long as we follow this layout, we can bind multiple
+different resources into the same slots. We need a SampledImage and a Sampler.
+Like with other shader stuff, the `binding` will be important later on in the
+shader itself, the numbers we pick here will have to match the numbers there.
 
 ```rust
       // 1. you make a DescriptorSetLayout which is the layout of one descriptor
@@ -790,13 +794,14 @@ we pick here will have to match the numbers there.
 
 Your actual `Descriptors`, which can be thought of as bindings that let us
 access resources from shaders, as well as the `DescriptorSet`s which they are
-bound into, come out of a `DescriptorPool`, which you make from the
-Device. Unlike with the command pool, we have to decide how much of each kind
-of descriptor, as well as how many sets, we'll ever allocate out of this thing
-ahead of time. The number of Descriptors is *shared* between all descriptor sets,
-so only tell it you want one SampledImage and one Sampler, but two descriptor sets,
-then bind one Sampler and SampledImage in the first set, the second set must be empty
-because you already used up all the Descriptors you said you wanted.
+bound into, come out of a `DescriptorPool`, which you make from the Device.
+Unlike with the command pool, we have to decide how much of each kind of
+descriptor, as well as how many sets, we'll ever allocate out of this thing
+ahead of time. The number of Descriptors is *shared* between all descriptor
+sets, so only tell it you want one SampledImage and one Sampler, but two
+descriptor sets, then bind one Sampler and SampledImage in the first set, the
+second set must be empty because you already used up all the Descriptors you
+said you wanted.
 
 ```rust
       // 2. you create a descriptor pool, and when making that descriptor pool
@@ -827,9 +832,10 @@ before step 3.
 
 ## Allocate A DescriptorSet
 
-With a layout and a pool, we're ready to allocate a DescriptorSet. A DescriptorSet
-is a set of desctiptors in a specific layout. When it's first created, there still aren't
-actual Descriptors written into the set yet, so that's the next thing we'll have to do.
+With a layout and a pool, we're ready to allocate a DescriptorSet. A
+DescriptorSet is a set of desctiptors in a specific layout. When it's first
+created, there still aren't actual Descriptors written into the set yet, so
+that's the next thing we'll have to do.
 
 ```rust
       // 3. you allocate said descriptor set from the pool you made earlier
@@ -859,16 +865,19 @@ image after we call `create_pipeline`.
     )?;
 ```
 
-This could technically be either before or after the call to `create_pipeline` (since
-neither depends on the other), but since it's "step 4" in this process, and `create_pipeline`
-// TODO.
+This could technically be either before or after the call to `create_pipeline`
+(since neither depends on the other), but since it's "step 4" in this process,
+and `create_pipeline` had steps 1 through 3, we'll put it after
+`create_pipeline`.
 
 ## Write The Descriptors Into The DescriptorSet
 
-Once all the resources which will be bound as `Descriptors` and the `DescriptorSet` exist
-at the same time (after `create_pipeline` and after we have our `LoadedImage`), we can write the
-one into the other. This binds the specific ImageView (being used as a SampledImage descriptor) and
-Sampler (being used as a Sampler descriptor) which we created into that specific DescriptorSet. 
+Once all the resources which will be bound as `Descriptors` and the
+`DescriptorSet` exist at the same time (after `create_pipeline` and after we
+have our `LoadedImage`), we can write the one into the other. This binds the
+specific ImageView (being used as a SampledImage descriptor) and Sampler (being
+used as a Sampler descriptor) which we created into that specific DescriptorSet.
+
 
 ```rust
     // 5. You write the descriptors into the descriptor set using
@@ -897,10 +906,10 @@ Sampler (being used as a Sampler descriptor) which we created into that specific
 Lastly, when we're doing all of our binding for the render pass, we have to bind
 this stuff too.If you had multiple images which you wanted to bind into the same
 shader program at different times, you'd create multiple DescriptorSets and then
-write the different resources into those different DescriptorSets and then finally
-bind the different set before the draw call. You can also bind more than one set per
-draw call, but the uses for this are a bit more complicated so we won't go into that
-for now.
+write the different resources into those different DescriptorSets and then
+finally bind the different set before the draw call. You can also bind more than
+one set per draw call, but the uses for this are a bit more complicated so we
+won't go into that for now.
 
 ```rust
         // 6. You actually bind the descriptor set in the command buffer before
