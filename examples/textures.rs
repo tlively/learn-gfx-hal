@@ -13,6 +13,7 @@ use gfx_backend_vulkan as back;
 
 use arrayvec::ArrayVec;
 use core::{
+  marker::PhantomData,
   mem::{size_of, ManuallyDrop},
   ops::Deref,
 };
@@ -78,30 +79,12 @@ layout (location = 0) out vec4 color;
 
 void main()
 {
-  //float time01 = -0.9 * abs(sin(push.time * 0.7)) + 0.9;
-  color = texture(sampler2D(tex, samp), frag_uv);
+  float time01 = -0.9 * abs(sin(push.time * 0.7)) + 0.9;
+  vec4 tex_color = texture(sampler2D(tex, samp), frag_uv);
+  color = mix(tex_color, vec4(frag_color, 1.0), time01);
 }";
 
 pub static CREATURE_BYTES: &[u8] = include_bytes!("creature.png");
-
-#[derive(Debug, Clone, Copy)]
-pub struct Triangle {
-  pub points: [[f32; 2]; 3],
-}
-impl Triangle {
-  pub fn points_flat(self) -> [f32; 6] {
-    let [[a, b], [c, d], [e, f]] = self.points;
-    [a, b, c, d, e, f]
-  }
-  pub fn vertex_attributes(self) -> [f32; 3 * (2 + 3)] {
-    let [[a, b], [c, d], [e, f]] = self.points;
-    [
-      a, b, 1.0, 0.0, 0.0, // red
-      c, d, 0.0, 1.0, 0.0, // green
-      e, f, 0.0, 0.0, 1.0, // blue
-    ]
-  }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Quad {
@@ -127,15 +110,14 @@ impl Quad {
   }
 }
 
-pub struct BufferBundle<B: Backend> {
-  buffer: ManuallyDrop<B::Buffer>,
-  requirements: Requirements,
-  memory: ManuallyDrop<B::Memory>,
+pub struct BufferBundle<B: Backend, D: Device<B>> {
+  pub buffer: ManuallyDrop<B::Buffer>,
+  pub requirements: Requirements,
+  pub memory: ManuallyDrop<B::Memory>,
+  pub phantom: PhantomData<D>,
 }
-impl<B: Backend> BufferBundle<B> {
-  pub fn new<D: Device<B>>(
-    adapter: &Adapter<back::Backend>, device: &D, size: usize, usage: BufferUsage,
-  ) -> Result<Self, &'static str> {
+impl<B: Backend, D: Device<B>> BufferBundle<B, D> {
+  pub fn new(adapter: &Adapter<B>, device: &D, size: usize, usage: BufferUsage) -> Result<Self, &'static str> {
     unsafe {
       let mut buffer = device
         .create_buffer(size as u64, usage)
@@ -162,11 +144,12 @@ impl<B: Backend> BufferBundle<B> {
         buffer: ManuallyDrop::new(buffer),
         requirements,
         memory: ManuallyDrop::new(memory),
+        phantom: PhantomData,
       })
     }
   }
 
-  pub unsafe fn manually_drop<D: Device<B>>(&self, device: &D) {
+  pub unsafe fn manually_drop(&self, device: &D) {
     use core::ptr::read;
     device.destroy_buffer(ManuallyDrop::into_inner(read(&self.buffer)));
     device.free_memory(ManuallyDrop::into_inner(read(&self.memory)));
@@ -182,7 +165,7 @@ pub struct LoadedImage<B: Backend> {
 }
 impl<B: Backend> LoadedImage<B> {
   pub fn new<C: Capability + Supports<Transfer>, D: Device<B>>(
-    adapter: &Adapter<back::Backend>, device: &D, command_pool: &mut CommandPool<B, C>, command_queue: &mut CommandQueue<B, C>,
+    adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>, command_queue: &mut CommandQueue<B, C>,
     img: image::RgbaImage,
   ) -> Result<Self, &'static str> {
     unsafe {
@@ -349,8 +332,8 @@ impl<B: Backend> LoadedImage<B> {
 
 pub struct HalState {
   creation_instant: Instant,
-  vertices: BufferBundle<back::Backend>,
-  indexes: BufferBundle<back::Backend>,
+  vertices: BufferBundle<back::Backend, back::Device>,
+  indexes: BufferBundle<back::Backend, back::Device>,
   texture: LoadedImage<back::Backend>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
   descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
@@ -589,10 +572,22 @@ impl HalState {
       Self::create_pipeline(&mut device, extent, &render_pass)?;
 
     const F32_XY_RGB_UV_QUAD: usize = size_of::<f32>() * (2 + 3 + 2) * 4;
-    let vertices = BufferBundle::new(&adapter, &mut device, F32_XY_RGB_UV_QUAD, BufferUsage::VERTEX)?;
+    let vertices = BufferBundle::new(&adapter, &device, F32_XY_RGB_UV_QUAD, BufferUsage::VERTEX)?;
 
     const U16_QUAD_INDICES: usize = size_of::<u16>() * 2 * 3;
-    let indexes = BufferBundle::new(&adapter, &mut device, U16_QUAD_INDICES, BufferUsage::INDEX)?;
+    let indexes = BufferBundle::new(&adapter, &device, U16_QUAD_INDICES, BufferUsage::INDEX)?;
+
+    // Write the index data just once.
+    unsafe {
+      let mut data_target = device
+        .acquire_mapping_writer(&indexes.memory, 0..indexes.requirements.size)
+        .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
+      const INDEX_DATA: &[u16] = &[0, 1, 2, 2, 3, 0];
+      data_target[..INDEX_DATA.len()].copy_from_slice(&INDEX_DATA);
+      device
+        .release_mapping_writer(data_target)
+        .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
+    }
 
     let texture = LoadedImage::new(
       &adapter,
@@ -993,20 +988,6 @@ impl HalState {
         .device
         .release_mapping_writer(data_target)
         .map_err(|_| "Couldn't release the VB mapping writer!")?;
-    }
-
-    // WRITE THE INDEX DATA
-    unsafe {
-      let mut data_target = self
-        .device
-        .acquire_mapping_writer(&self.indexes.memory, 0..self.indexes.requirements.size)
-        .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
-      const INDEX_DATA: &[u16] = &[0, 1, 2, 2, 3, 0];
-      data_target[..INDEX_DATA.len()].copy_from_slice(&INDEX_DATA);
-      self
-        .device
-        .release_mapping_writer(data_target)
-        .map_err(|_| "Couldn't release the IB mapping writer!")?;
     }
 
     // DETERMINE THE TIME DATA
