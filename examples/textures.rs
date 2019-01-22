@@ -156,31 +156,41 @@ impl<B: Backend, D: Device<B>> BufferBundle<B, D> {
   }
 }
 
-pub struct LoadedImage<B: Backend> {
+pub struct LoadedImage<B: Backend, D: Device<B>> {
   pub image: ManuallyDrop<B::Image>,
   pub requirements: Requirements,
   pub memory: ManuallyDrop<B::Memory>,
   pub image_view: ManuallyDrop<B::ImageView>,
   pub sampler: ManuallyDrop<B::Sampler>,
+  pub phantom: PhantomData<D>,
 }
-impl<B: Backend> LoadedImage<B> {
-  pub fn new<C: Capability + Supports<Transfer>, D: Device<B>>(
+impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
+  pub fn new<C: Capability + Supports<Transfer>>(
     adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>, command_queue: &mut CommandQueue<B, C>,
     img: image::RgbaImage,
   ) -> Result<Self, &'static str> {
     unsafe {
-      // 1. make buffer with enough memory for image and transfer_src usage
+      // 1. make a staging buffer with enough memory for the image, and a
+      //    transfer_src usage
       let required_bytes = size_of::<image::Rgba<u8>>() * img.width() as usize * img.height() as usize;
-      let texture_src_bundle = BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
+      let staging_bundle = BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
 
       // 2. use mapping writer to put the image data into that buffer
+      let limits = adapter.physical_device.limits();
+      let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
+      let image_stride = size_of::<image::Rgba<u8>>();
+      let row_pitch = (img.width() * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
       let mut writer = device
-        .acquire_mapping_writer::<u8>(&texture_src_bundle.memory, 0..texture_src_bundle.requirements.size)
-        .map_err(|_| "Couldn't acquire a mapping writer for the staging buffer!")?;
-      writer[..<[u8]>::len(&img)].copy_from_slice(&img);
+        .acquire_mapping_writer::<u8>(&staging_bundle.memory, 0..staging_bundle.requirements.size)
+        .map_err(|_| "Couldn't acquire a mapping writer to the staging buffer!")?;
+      for y in 0..img.height() as usize {
+        let row = &(*img)[y * (img.width() as usize) * image_stride..(y + 1) * (img.width() as usize) * image_stride];
+        let dest_base = y * row_pitch as usize;
+        writer[dest_base..dest_base + row.len()].copy_from_slice(row);
+      }
       device
         .release_mapping_writer(writer)
-        .map_err(|_| "Couldn't release the mapping writer for the staging buffer!")?;
+        .map_err(|_| "Couldn't release the mapping writer to the staging buffer!")?;
 
       // 3. Make an image with transfer_dst and SAMPLED usage
       let mut the_image = device
@@ -240,7 +250,8 @@ impl<B: Backend> LoadedImage<B> {
       let mut cmd_buffer = command_pool.acquire_command_buffer::<gfx_hal::command::OneShot>();
       cmd_buffer.begin();
 
-      // 7. Use a pipeline barrier to transition the image from empty/undefined to TRANSFER_WRITE/TransferDstOptimal
+      // 7. Use a pipeline barrier to transition the image from empty/undefined
+      //    to TRANSFER_WRITE/TransferDstOptimal
       let image_barrier = gfx_hal::memory::Barrier::Image {
         states: (gfx_hal::image::Access::empty(), Layout::Undefined)
           ..(gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
@@ -258,9 +269,9 @@ impl<B: Backend> LoadedImage<B> {
         &[image_barrier],
       );
 
-      // 8. perform copy from buffer to image
+      // 8. perform copy from staging buffer to image
       cmd_buffer.copy_buffer_to_image(
-        &texture_src_bundle.buffer,
+        &staging_bundle.buffer,
         &the_image,
         Layout::TransferDstOptimal,
         &[gfx_hal::command::BufferImageCopy {
@@ -281,7 +292,8 @@ impl<B: Backend> LoadedImage<B> {
         }],
       );
 
-      // 9. use pipeline barrier to transition the image to SHADER_READ access/ ShaderReadOnlyOptimal layout
+      // 9. use pipeline barrier to transition the image to SHADER_READ access/
+      //    ShaderReadOnlyOptimal layout
       let image_barrier = gfx_hal::memory::Barrier::Image {
         states: (gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
           ..(gfx_hal::image::Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
@@ -308,8 +320,8 @@ impl<B: Backend> LoadedImage<B> {
         .map_err(|_| "Couldn't wait for the fence!")?;
       device.destroy_fence(upload_fence);
 
-      // 11. Destroy the transfer_src now that we're done with it
-      texture_src_bundle.manually_drop(device);
+      // 11. Destroy the staging bundle now that we're done with it
+      staging_bundle.manually_drop(device);
 
       Ok(Self {
         image: ManuallyDrop::new(the_image),
@@ -317,11 +329,12 @@ impl<B: Backend> LoadedImage<B> {
         memory: ManuallyDrop::new(memory),
         image_view: ManuallyDrop::new(image_view),
         sampler: ManuallyDrop::new(sampler),
+        phantom: PhantomData,
       })
     }
   }
 
-  pub unsafe fn manually_drop<D: Device<B>>(&self, device: &D) {
+  pub unsafe fn manually_drop(&self, device: &D) {
     use core::ptr::read;
     device.destroy_sampler(ManuallyDrop::into_inner(read(&self.sampler)));
     device.destroy_image_view(ManuallyDrop::into_inner(read(&self.image_view)));
@@ -334,7 +347,7 @@ pub struct HalState {
   creation_instant: Instant,
   vertices: BufferBundle<back::Backend, back::Device>,
   indexes: BufferBundle<back::Backend, back::Device>,
-  texture: LoadedImage<back::Backend>,
+  texture: LoadedImage<back::Backend, back::Device>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
   descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
   descriptor_set: ManuallyDrop<<back::Backend as Backend>::DescriptorSet>,
@@ -589,6 +602,8 @@ impl HalState {
         .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
     }
 
+    // 4. You create the actual descriptors which you want to write into the
+    //    allocated descriptor set (in this case an image and a sampler)
     let texture = LoadedImage::new(
       &adapter,
       &device,
@@ -596,12 +611,6 @@ impl HalState {
       &mut queue_group.queues[0],
       image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
     )?;
-
-    // Image Upload Steps Continued
-
-    // 4. You create the actual descriptors which you want to write into the
-    //    allocated descriptor set (in this case an image and a sampler)
-    // this was part of the LoadedImage process
 
     // 5. You write the descriptors into the descriptor set using
     //    write_descriptor_sets which you pass a set of DescriptorSetWrites
