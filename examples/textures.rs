@@ -170,21 +170,24 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
     img: image::RgbaImage,
   ) -> Result<Self, &'static str> {
     unsafe {
+      let pixel_size = size_of::<image::Rgba<u8>>();
+      let row_size = pixel_size * (img.width() as usize);
+
+      let limits = adapter.physical_device.limits();
+      let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
+      let row_pitch = (row_size as u32 + row_alignment_mask) & !row_alignment_mask;
+
       // 1. make a staging buffer with enough memory for the image, and a
       //    transfer_src usage
-      let required_bytes = size_of::<image::Rgba<u8>>() * img.width() as usize * img.height() as usize;
+      let required_bytes = (row_pitch * img.height()) as usize;
       let staging_bundle = BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
 
       // 2. use mapping writer to put the image data into that buffer
-      let limits = adapter.physical_device.limits();
-      let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
-      let image_stride = size_of::<image::Rgba<u8>>();
-      let row_pitch = (img.width() * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
       let mut writer = device
         .acquire_mapping_writer::<u8>(&staging_bundle.memory, 0..staging_bundle.requirements.size)
         .map_err(|_| "Couldn't acquire a mapping writer to the staging buffer!")?;
       for y in 0..img.height() as usize {
-        let row = &(*img)[y * (img.width() as usize) * image_stride..(y + 1) * (img.width() as usize) * image_stride];
+        let row = &(*img)[y * row_size..(y + 1) * row_size];
         let dest_base = y * row_pitch as usize;
         writer[dest_base..dest_base + row.len()].copy_from_slice(row);
       }
