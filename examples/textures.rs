@@ -28,10 +28,11 @@ use gfx_hal::{
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
-    AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc,
-    DepthTest, DescriptorSetLayoutBinding, ElemOffset, ElemStride, Element, EntryPoint, Face, Factor, FrontFace,
-    GraphicsPipelineDesc, GraphicsShaderSet, InputAssemblerDesc, LogicOp, PipelineCreationFlags, PipelineStage, PolygonMode,
-    Rasterizer, Rect, ShaderStageFlags, Specialization, StencilTest, VertexBufferDesc, Viewport,
+    AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc,
+    ColorMask, DepthStencilDesc, DepthTest, DescriptorSetLayoutBinding, ElemOffset, ElemStride,
+    Element, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
+    InputAssemblerDesc, LogicOp, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer,
+    Rect, ShaderStageFlags, Specialization, StencilTest, VertexBufferDesc, Viewport,
   },
   queue::{
     capability::{Capability, Supports, Transfer},
@@ -42,7 +43,9 @@ use gfx_hal::{
   Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use std::time::Instant;
-use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
+use winit::{
+  dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent,
+};
 
 pub const WINDOW_NAME: &str = "Textures";
 
@@ -117,7 +120,9 @@ pub struct BufferBundle<B: Backend, D: Device<B>> {
   pub phantom: PhantomData<D>,
 }
 impl<B: Backend, D: Device<B>> BufferBundle<B, D> {
-  pub fn new(adapter: &Adapter<B>, device: &D, size: usize, usage: BufferUsage) -> Result<Self, &'static str> {
+  pub fn new(
+    adapter: &Adapter<B>, device: &D, size: usize, usage: BufferUsage,
+  ) -> Result<Self, &'static str> {
     unsafe {
       let mut buffer = device
         .create_buffer(size as u64, usage)
@@ -130,7 +135,8 @@ impl<B: Backend, D: Device<B>> BufferBundle<B, D> {
         .iter()
         .enumerate()
         .find(|&(id, memory_type)| {
-          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE)
+          requirements.type_mask & (1 << id) != 0
+            && memory_type.properties.contains(Properties::CPU_VISIBLE)
         })
         .map(|(id, _)| MemoryTypeId(id))
         .ok_or("Couldn't find a memory type to support the buffer!")?;
@@ -166,8 +172,8 @@ pub struct LoadedImage<B: Backend, D: Device<B>> {
 }
 impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
   pub fn new<C: Capability + Supports<Transfer>>(
-    adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>, command_queue: &mut CommandQueue<B, C>,
-    img: image::RgbaImage,
+    adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>,
+    command_queue: &mut CommandQueue<B, C>, img: image::RgbaImage,
   ) -> Result<Self, &'static str> {
     unsafe {
       // 0. First we compute some memory related values.
@@ -181,7 +187,8 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
       // 1. make a staging buffer with enough memory for the image, and a
       //    transfer_src usage
       let required_bytes = row_pitch * img.height() as usize;
-      let staging_bundle = BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
+      let staging_bundle =
+        BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
 
       // 2. use mapping writer to put the image data into that buffer
       let mut writer = device
@@ -218,7 +225,8 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
         .enumerate()
         .find(|&(id, memory_type)| {
           // BIG NOTE: THIS IS DEVICE LOCAL NOT CPU VISIBLE
-          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::DEVICE_LOCAL)
+          requirements.type_mask & (1 << id) != 0
+            && memory_type.properties.contains(Properties::DEVICE_LOCAL)
         })
         .map(|(id, _)| MemoryTypeId(id))
         .ok_or("Couldn't find a memory type to support the image!")?;
@@ -258,7 +266,10 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
       //    to TRANSFER_WRITE/TransferDstOptimal
       let image_barrier = gfx_hal::memory::Barrier::Image {
         states: (gfx_hal::image::Access::empty(), Layout::Undefined)
-          ..(gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
+          ..(
+            gfx_hal::image::Access::TRANSFER_WRITE,
+            Layout::TransferDstOptimal,
+          ),
         target: &the_image,
         families: None,
         range: SubresourceRange {
@@ -299,8 +310,14 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
       // 9. use pipeline barrier to transition the image to SHADER_READ access/
       //    ShaderReadOnlyOptimal layout
       let image_barrier = gfx_hal::memory::Barrier::Image {
-        states: (gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
-          ..(gfx_hal::image::Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+        states: (
+          gfx_hal::image::Access::TRANSFER_WRITE,
+          Layout::TransferDstOptimal,
+        )
+          ..(
+            gfx_hal::image::Access::SHADER_READ,
+            Layout::ShaderReadOnlyOptimal,
+          ),
         target: &the_image,
         families: None,
         range: SubresourceRange {
@@ -317,7 +334,9 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
 
       // 10. Submit the cmd buffer to queue and wait for it
       cmd_buffer.finish();
-      let upload_fence = device.create_fence(false).map_err(|_| "Couldn't create an upload fence!")?;
+      let upload_fence = device
+        .create_fence(false)
+        .map_err(|_| "Couldn't create an upload fence!")?;
       command_queue.submit_nosemaphores(Some(&cmd_buffer), Some(&upload_fence));
       device
         .wait_for_fence(&upload_fence, core::u64::MAX)
@@ -422,7 +441,8 @@ impl HalState {
 
     // Create A Swapchain, this is extra long
     let (swapchain, extent, backbuffer, format, frames_in_flight) = {
-      let (caps, preferred_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let (caps, preferred_formats, present_modes, composite_alphas) =
+        surface.compatibility(&adapter.physical_device);
       info!("{:?}", caps);
       info!("Preferred Formats: {:?}", preferred_formats);
       info!("Present Modes: {:?}", present_modes);
@@ -452,14 +472,21 @@ impl HalState {
           .cloned()
         {
           Some(srgb_format) => srgb_format,
-          None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
+          None => formats
+            .get(0)
+            .cloned()
+            .ok_or("Preferred format list was empty!")?,
         },
       };
       let extent = {
         let window_client_area = window.get_inner_size().ok_or("Window doesn't exist!")?;
         Extent2D {
           width: caps.extents.end.width.min(window_client_area.width as u32),
-          height: caps.extents.end.height.min(window_client_area.height as u32),
+          height: caps
+            .extents
+            .end
+            .height
+            .min(window_client_area.height as u32),
         }
       };
       let image_count = if present_mode == PresentMode::Mailbox {
@@ -498,11 +525,27 @@ impl HalState {
       let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
       let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
       for _ in 0..frames_in_flight {
-        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
-        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
-        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        in_flight_fences.push(
+          device
+            .create_fence(true)
+            .map_err(|_| "Could not create a fence!")?,
+        );
+        image_available_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
+        render_finished_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
       }
-      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+      (
+        image_available_semaphores,
+        render_finished_semaphores,
+        in_flight_fences,
+      )
     };
 
     // Define A RenderPass
@@ -582,7 +625,10 @@ impl HalState {
     };
 
     // Create Our CommandBuffers
-    let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
+    let command_buffers: Vec<_> = framebuffers
+      .iter()
+      .map(|_| command_pool.acquire_command_buffer())
+      .collect();
 
     // Build our pipeline and vertex buffer
     let (descriptor_set_layouts, descriptor_pool, descriptor_set, pipeline_layout, gfx_pipeline) =
@@ -613,7 +659,9 @@ impl HalState {
       &device,
       &mut command_pool,
       &mut queue_group.queues[0],
-      image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
+      image::load_from_memory(CREATURE_BYTES)
+        .expect("Binary corrupted!")
+        .to_rgba(),
     )?;
 
     // 5. You write the descriptors into the descriptor set using
@@ -625,7 +673,10 @@ impl HalState {
           set: &descriptor_set,
           binding: 0,
           array_offset: 0,
-          descriptors: Some(gfx_hal::pso::Descriptor::Image(texture.image_view.deref(), Layout::Undefined)),
+          descriptors: Some(gfx_hal::pso::Descriptor::Image(
+            texture.image_view.deref(),
+            Layout::Undefined,
+          )),
         },
         gfx_hal::pso::DescriptorSetWrite {
           set: &descriptor_set,
@@ -668,7 +719,8 @@ impl HalState {
 
   #[allow(clippy::type_complexity)]
   fn create_pipeline(
-    device: &mut back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
+    device: &mut back::Device, extent: Extent2D,
+    render_pass: &<back::Backend as Backend>::RenderPass,
   ) -> Result<
     (
       Vec<<back::Backend as Backend>::DescriptorSetLayout>,
@@ -681,13 +733,25 @@ impl HalState {
   > {
     let mut compiler = shaderc::Compiler::new().ok_or("shaderc not found!")?;
     let vertex_compile_artifact = compiler
-      .compile_into_spirv(VERTEX_SOURCE, shaderc::ShaderKind::Vertex, "vertex.vert", "main", None)
+      .compile_into_spirv(
+        VERTEX_SOURCE,
+        shaderc::ShaderKind::Vertex,
+        "vertex.vert",
+        "main",
+        None,
+      )
       .map_err(|e| {
         error!("{}", e);
         "Couldn't compile vertex shader!"
       })?;
     let fragment_compile_artifact = compiler
-      .compile_into_spirv(FRAGMENT_SOURCE, shaderc::ShaderKind::Fragment, "fragment.frag", "main", None)
+      .compile_into_spirv(
+        FRAGMENT_SOURCE,
+        shaderc::ShaderKind::Fragment,
+        "fragment.frag",
+        "main",
+        None,
+      )
       .map_err(|e| {
         error!("{}", e);
         "Couldn't compile fragment shader!"
@@ -806,29 +870,30 @@ impl HalState {
 
       // 1. you make a DescriptorSetLayout which is the layout of one descriptor
       //    set
-      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> = vec![unsafe {
-        device
-          .create_descriptor_set_layout(
-            &[
-              DescriptorSetLayoutBinding {
-                binding: 0,
-                ty: gfx_hal::pso::DescriptorType::SampledImage,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-              },
-              DescriptorSetLayoutBinding {
-                binding: 1,
-                ty: gfx_hal::pso::DescriptorType::Sampler,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-              },
-            ],
-            &[],
-          )
-          .map_err(|_| "Couldn't make a DescriptorSetLayout")?
-      }];
+      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> =
+        vec![unsafe {
+          device
+            .create_descriptor_set_layout(
+              &[
+                DescriptorSetLayoutBinding {
+                  binding: 0,
+                  ty: gfx_hal::pso::DescriptorType::SampledImage,
+                  count: 1,
+                  stage_flags: ShaderStageFlags::FRAGMENT,
+                  immutable_samplers: false,
+                },
+                DescriptorSetLayoutBinding {
+                  binding: 1,
+                  ty: gfx_hal::pso::DescriptorType::Sampler,
+                  count: 1,
+                  stage_flags: ShaderStageFlags::FRAGMENT,
+                  immutable_samplers: false,
+                },
+              ],
+              &[],
+            )
+            .map_err(|_| "Couldn't make a DescriptorSetLayout")?
+        }];
 
       // 2. you create a descriptor pool, and when making that descriptor pool
       //    you specify how many sets you want to be able to allocate from the
@@ -894,7 +959,13 @@ impl HalState {
         }
       };
 
-      (descriptor_set_layouts, descriptor_pool, descriptor_set, layout, gfx_pipeline)
+      (
+        descriptor_set_layouts,
+        descriptor_pool,
+        descriptor_set,
+        layout,
+        gfx_pipeline,
+      )
     };
 
     unsafe {
@@ -902,7 +973,13 @@ impl HalState {
       device.destroy_shader_module(fragment_shader_module);
     }
 
-    Ok((descriptor_set_layouts, descriptor_pool, descriptor_set, layout, gfx_pipeline))
+    Ok((
+      descriptor_set_layouts,
+      descriptor_pool,
+      descriptor_set,
+      layout,
+      gfx_pipeline,
+    ))
   }
 
   /// Draw a frame that's just cleared to the color specified.
@@ -946,7 +1023,8 @@ impl HalState {
 
     // SUBMISSION AND PRESENT
     let command_buffers = &self.command_buffers[i_usize..=i_usize];
-    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let wait_semaphores: ArrayVec<[_; 1]> =
+      [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
     // yes, you have to write it twice like this. yes, it's silly.
     let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
@@ -1010,7 +1088,8 @@ impl HalState {
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
-      const QUAD_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
+      const QUAD_CLEAR: [ClearValue; 1] =
+        [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
       buffer.begin(false);
       {
         let mut encoder = buffer.begin_render_pass_inline(
@@ -1029,8 +1108,18 @@ impl HalState {
         });
         // 6. You actually bind the descriptor set in the command buffer before
         //    the draw call using bind_graphics_descriptor_sets
-        encoder.bind_graphics_descriptor_sets(&self.pipeline_layout, 0, Some(self.descriptor_set.deref()), &[]);
-        encoder.push_graphics_constants(&self.pipeline_layout, ShaderStageFlags::FRAGMENT, 0, &[time_f32.to_bits()]);
+        encoder.bind_graphics_descriptor_sets(
+          &self.pipeline_layout,
+          0,
+          Some(self.descriptor_set.deref()),
+          &[],
+        );
+        encoder.push_graphics_constants(
+          &self.pipeline_layout,
+          ShaderStageFlags::FRAGMENT,
+          0,
+          &[time_f32.to_bits()],
+        );
         encoder.draw_indexed(0..6, 0, 0..1);
       }
       buffer.finish();
@@ -1038,7 +1127,8 @@ impl HalState {
 
     // SUBMISSION AND PRESENT
     let command_buffers = &self.command_buffers[i_usize..=i_usize];
-    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let wait_semaphores: ArrayVec<[_; 1]> =
+      [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
     // yes, you have to write it twice like this. yes, it's silly.
     let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
@@ -1065,7 +1155,9 @@ impl core::ops::Drop for HalState {
     let _ = self.device.wait_idle();
     unsafe {
       for descriptor_set_layout in self.descriptor_set_layouts.drain(..) {
-        self.device.destroy_descriptor_set_layout(descriptor_set_layout)
+        self
+          .device
+          .destroy_descriptor_set_layout(descriptor_set_layout)
       }
       for fence in self.in_flight_fences.drain(..) {
         self.device.destroy_fence(fence)
@@ -1103,7 +1195,9 @@ impl core::ops::Drop for HalState {
       self
         .device
         .destroy_render_pass(ManuallyDrop::into_inner(read(&self.render_pass)));
-      self.device.destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
+      self
+        .device
+        .destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
       ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
@@ -1128,7 +1222,10 @@ impl WinitState {
       .with_title(title)
       .with_dimensions(size)
       .build(&events_loop);
-    output.map(|window| Self { events_loop, window })
+    output.map(|window| Self {
+      events_loop,
+      window,
+    })
   }
 }
 

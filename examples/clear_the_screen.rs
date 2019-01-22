@@ -25,7 +25,9 @@ use gfx_hal::{
   window::{Backbuffer, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, QueueFamily, Surface,
 };
-use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
+use winit::{
+  dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent,
+};
 
 pub const WINDOW_NAME: &str = "Hello Clear";
 
@@ -94,7 +96,8 @@ impl HalState {
 
     // Create A Swapchain, this is extra long
     let (swapchain, extent, backbuffer, format, frames_in_flight) = {
-      let (caps, preferred_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let (caps, preferred_formats, present_modes, composite_alphas) =
+        surface.compatibility(&adapter.physical_device);
       info!("{:?}", caps);
       info!("Preferred Formats: {:?}", preferred_formats);
       info!("Present Modes: {:?}", present_modes);
@@ -124,7 +127,10 @@ impl HalState {
           .cloned()
         {
           Some(srgb_format) => srgb_format,
-          None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
+          None => formats
+            .get(0)
+            .cloned()
+            .ok_or("Preferred format list was empty!")?,
         },
       };
       let extent = caps.extents.end;
@@ -164,11 +170,27 @@ impl HalState {
       let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
       let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
       for _ in 0..frames_in_flight {
-        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
-        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
-        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        in_flight_fences.push(
+          device
+            .create_fence(true)
+            .map_err(|_| "Could not create a fence!")?,
+        );
+        image_available_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
+        render_finished_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
       }
-      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+      (
+        image_available_semaphores,
+        render_finished_semaphores,
+        in_flight_fences,
+      )
     };
 
     // Define A RenderPass
@@ -248,7 +270,10 @@ impl HalState {
     };
 
     // Create Our CommandBuffers
-    let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
+    let command_buffers: Vec<_> = framebuffers
+      .iter()
+      .map(|_| command_pool.acquire_command_buffer())
+      .collect();
 
     Ok(Self {
       _instance: ManuallyDrop::new(instance),
@@ -312,7 +337,8 @@ impl HalState {
 
     // SUBMISSION AND PRESENT
     let command_buffers = &self.command_buffers[i_usize..=i_usize];
-    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let wait_semaphores: ArrayVec<[_; 1]> =
+      [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
     // yes, you have to write it twice like this. yes, it's silly.
     let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
@@ -360,7 +386,9 @@ impl core::ops::Drop for HalState {
       self
         .device
         .destroy_render_pass(ManuallyDrop::into_inner(read(&self.render_pass)));
-      self.device.destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
+      self
+        .device
+        .destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
       ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
@@ -384,7 +412,10 @@ impl WinitState {
       .with_title(title)
       .with_dimensions(size)
       .build(&events_loop);
-    output.map(|window| Self { events_loop, window })
+    output.map(|window| Self {
+      events_loop,
+      window,
+    })
   }
 }
 impl Default for WinitState {

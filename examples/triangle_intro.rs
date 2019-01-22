@@ -24,16 +24,19 @@ use gfx_hal::{
   pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
-    AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc, ColorMask, DepthStencilDesc,
-    DepthTest, DescriptorSetLayoutBinding, Element, EntryPoint, Face, Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet,
-    InputAssemblerDesc, LogicOp, PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect, ShaderStageFlags,
+    AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc,
+    ColorMask, DepthStencilDesc, DepthTest, DescriptorSetLayoutBinding, Element, EntryPoint, Face,
+    Factor, FrontFace, GraphicsPipelineDesc, GraphicsShaderSet, InputAssemblerDesc, LogicOp,
+    PipelineCreationFlags, PipelineStage, PolygonMode, Rasterizer, Rect, ShaderStageFlags,
     Specialization, StencilTest, VertexBufferDesc, Viewport,
   },
   queue::{family::QueueGroup, Submission},
   window::{Backbuffer, Extent2D, FrameSync, PresentMode, Swapchain, SwapchainConfig},
   Backend, Gpu, Graphics, Instance, Primitive, QueueFamily, Surface,
 };
-use winit::{dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent};
+use winit::{
+  dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent,
+};
 
 pub const WINDOW_NAME: &str = "Triangle Intro";
 
@@ -140,7 +143,8 @@ impl HalState {
 
     // Create A Swapchain, this is extra long
     let (swapchain, extent, backbuffer, format, frames_in_flight) = {
-      let (caps, preferred_formats, present_modes, composite_alphas) = surface.compatibility(&adapter.physical_device);
+      let (caps, preferred_formats, present_modes, composite_alphas) =
+        surface.compatibility(&adapter.physical_device);
       info!("{:?}", caps);
       info!("Preferred Formats: {:?}", preferred_formats);
       info!("Present Modes: {:?}", present_modes);
@@ -170,14 +174,21 @@ impl HalState {
           .cloned()
         {
           Some(srgb_format) => srgb_format,
-          None => formats.get(0).cloned().ok_or("Preferred format list was empty!")?,
+          None => formats
+            .get(0)
+            .cloned()
+            .ok_or("Preferred format list was empty!")?,
         },
       };
       let extent = {
         let window_client_area = window.get_inner_size().ok_or("Window doesn't exist!")?;
         Extent2D {
           width: caps.extents.end.width.min(window_client_area.width as u32),
-          height: caps.extents.end.height.min(window_client_area.height as u32),
+          height: caps
+            .extents
+            .end
+            .height
+            .min(window_client_area.height as u32),
         }
       };
       let image_count = if present_mode == PresentMode::Mailbox {
@@ -216,11 +227,27 @@ impl HalState {
       let mut render_finished_semaphores: Vec<<back::Backend as Backend>::Semaphore> = vec![];
       let mut in_flight_fences: Vec<<back::Backend as Backend>::Fence> = vec![];
       for _ in 0..frames_in_flight {
-        in_flight_fences.push(device.create_fence(true).map_err(|_| "Could not create a fence!")?);
-        image_available_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
-        render_finished_semaphores.push(device.create_semaphore().map_err(|_| "Could not create a semaphore!")?);
+        in_flight_fences.push(
+          device
+            .create_fence(true)
+            .map_err(|_| "Could not create a fence!")?,
+        );
+        image_available_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
+        render_finished_semaphores.push(
+          device
+            .create_semaphore()
+            .map_err(|_| "Could not create a semaphore!")?,
+        );
       }
-      (image_available_semaphores, render_finished_semaphores, in_flight_fences)
+      (
+        image_available_semaphores,
+        render_finished_semaphores,
+        in_flight_fences,
+      )
     };
 
     // Define A RenderPass
@@ -300,10 +327,14 @@ impl HalState {
     };
 
     // Create Our CommandBuffers
-    let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
+    let command_buffers: Vec<_> = framebuffers
+      .iter()
+      .map(|_| command_pool.acquire_command_buffer())
+      .collect();
 
     // Build our pipeline and vertex buffer
-    let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) = Self::create_pipeline(&mut device, extent, &render_pass)?;
+    let (descriptor_set_layouts, pipeline_layout, graphics_pipeline) =
+      Self::create_pipeline(&mut device, extent, &render_pass)?;
     let (buffer, memory, requirements) = unsafe {
       const F32_XY_TRIANGLE: u64 = (size_of::<f32>() * 2 * 3) as u64;
       let mut buffer = device
@@ -317,7 +348,8 @@ impl HalState {
         .iter()
         .enumerate()
         .find(|&(id, memory_type)| {
-          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::CPU_VISIBLE)
+          requirements.type_mask & (1 << id) != 0
+            && memory_type.properties.contains(Properties::CPU_VISIBLE)
         })
         .map(|(id, _)| MemoryTypeId(id))
         .ok_or("Couldn't find a memory type to support the vertex buffer!")?;
@@ -359,7 +391,8 @@ impl HalState {
 
   #[allow(clippy::type_complexity)]
   fn create_pipeline(
-    device: &mut back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
+    device: &mut back::Device, extent: Extent2D,
+    render_pass: &<back::Backend as Backend>::RenderPass,
   ) -> Result<
     (
       Vec<<back::Backend as Backend>::DescriptorSetLayout>,
@@ -370,10 +403,22 @@ impl HalState {
   > {
     let mut compiler = shaderc::Compiler::new().ok_or("shaderc not found!")?;
     let vertex_compile_artifact = compiler
-      .compile_into_spirv(VERTEX_SOURCE, shaderc::ShaderKind::Vertex, "vertex.vert", "main", None)
+      .compile_into_spirv(
+        VERTEX_SOURCE,
+        shaderc::ShaderKind::Vertex,
+        "vertex.vert",
+        "main",
+        None,
+      )
       .map_err(|_| "Couldn't compile vertex shader!")?;
     let fragment_compile_artifact = compiler
-      .compile_into_spirv(FRAGMENT_SOURCE, shaderc::ShaderKind::Fragment, "fragment.frag", "main", None)
+      .compile_into_spirv(
+        FRAGMENT_SOURCE,
+        shaderc::ShaderKind::Fragment,
+        "fragment.frag",
+        "main",
+        None,
+      )
       .map_err(|e| {
         error!("{}", e);
         "Couldn't compile fragment shader!"
@@ -475,11 +520,12 @@ impl HalState {
 
       let bindings = Vec::<DescriptorSetLayoutBinding>::new();
       let immutable_samplers = Vec::<<back::Backend as Backend>::Sampler>::new();
-      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> = vec![unsafe {
-        device
-          .create_descriptor_set_layout(bindings, immutable_samplers)
-          .map_err(|_| "Couldn't make a DescriptorSetLayout")?
-      }];
+      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> =
+        vec![unsafe {
+          device
+            .create_descriptor_set_layout(bindings, immutable_samplers)
+            .map_err(|_| "Couldn't make a DescriptorSetLayout")?
+        }];
       let push_constants = Vec::<(ShaderStageFlags, core::ops::Range<u32>)>::new();
       let layout = unsafe {
         device
@@ -566,7 +612,8 @@ impl HalState {
 
     // SUBMISSION AND PRESENT
     let command_buffers = &self.command_buffers[i_usize..=i_usize];
-    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let wait_semaphores: ArrayVec<[_; 1]> =
+      [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
     // yes, you have to write it twice like this. yes, it's silly.
     let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
@@ -626,7 +673,8 @@ impl HalState {
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
-      const TRIANGLE_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
+      const TRIANGLE_CLEAR: [ClearValue; 1] =
+        [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
       buffer.begin(false);
       {
         let mut encoder = buffer.begin_render_pass_inline(
@@ -647,7 +695,8 @@ impl HalState {
 
     // SUBMISSION AND PRESENT
     let command_buffers = &self.command_buffers[i_usize..=i_usize];
-    let wait_semaphores: ArrayVec<[_; 1]> = [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
+    let wait_semaphores: ArrayVec<[_; 1]> =
+      [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
     // yes, you have to write it twice like this. yes, it's silly.
     let present_wait_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
@@ -674,7 +723,9 @@ impl core::ops::Drop for HalState {
     let _ = self.device.wait_idle();
     unsafe {
       for descriptor_set_layout in self.descriptor_set_layouts.drain(..) {
-        self.device.destroy_descriptor_set_layout(descriptor_set_layout)
+        self
+          .device
+          .destroy_descriptor_set_layout(descriptor_set_layout)
       }
       for fence in self.in_flight_fences.drain(..) {
         self.device.destroy_fence(fence)
@@ -693,8 +744,12 @@ impl core::ops::Drop for HalState {
       }
       // LAST RESORT STYLE CODE, NOT TO BE IMITATED LIGHTLY
       use core::ptr::read;
-      self.device.destroy_buffer(ManuallyDrop::into_inner(read(&self.buffer)));
-      self.device.free_memory(ManuallyDrop::into_inner(read(&self.memory)));
+      self
+        .device
+        .destroy_buffer(ManuallyDrop::into_inner(read(&self.buffer)));
+      self
+        .device
+        .free_memory(ManuallyDrop::into_inner(read(&self.memory)));
       self
         .device
         .destroy_pipeline_layout(ManuallyDrop::into_inner(read(&self.pipeline_layout)));
@@ -707,7 +762,9 @@ impl core::ops::Drop for HalState {
       self
         .device
         .destroy_render_pass(ManuallyDrop::into_inner(read(&self.render_pass)));
-      self.device.destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
+      self
+        .device
+        .destroy_swapchain(ManuallyDrop::into_inner(read(&self.swapchain)));
       ManuallyDrop::drop(&mut self.device);
       ManuallyDrop::drop(&mut self._instance);
     }
@@ -732,7 +789,10 @@ impl WinitState {
       .with_title(title)
       .with_dimensions(size)
       .build(&events_loop);
-    output.map(|window| Self { events_loop, window })
+    output.map(|window| Self {
+      events_loop,
+      window,
+    })
   }
 }
 
