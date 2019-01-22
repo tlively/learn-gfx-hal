@@ -1006,14 +1006,14 @@ impl HalState {
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
-      const TRIANGLE_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
+      const QUAD_CLEAR: [ClearValue; 1] = [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
       buffer.begin(false);
       {
         let mut encoder = buffer.begin_render_pass_inline(
           &self.render_pass,
           &self.framebuffers[i_usize],
           self.render_area,
-          TRIANGLE_CLEAR.iter(),
+          QUAD_CLEAR.iter(),
         );
         encoder.bind_graphics_pipeline(&self.graphics_pipeline);
         let vertex_buffers: ArrayVec<[_; 1]> = [(self.vertices.buffer.deref(), 0)].into();
