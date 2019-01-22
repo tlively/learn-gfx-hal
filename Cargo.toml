@@ -23,6 +23,7 @@ gfx-hal = "0.1"
 arrayvec = "0.4"
 shaderc = "0.3"
 image = "0.21"
+crossbeam = "0.6"
 
 [dependencies.gfx-backend-vulkan]
 version = "0.1"

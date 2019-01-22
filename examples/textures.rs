@@ -178,14 +178,27 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
       // 2. use mapping writer to put the image data into that buffer
       let limits = adapter.physical_device.limits();
       let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
-      let image_stride = size_of::<image::Rgba<u8>>();
-      let row_pitch = (img.width() * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
+      let pixel_size = size_of::<image::Rgba<u8>>();
+      let row_size = (img.width() as usize) * pixel_size;
+      let row_pitch = (img.width() * pixel_size as u32 + row_alignment_mask) & !row_alignment_mask;
       let mut writer = device
         .acquire_mapping_writer::<u8>(&staging_bundle.memory, 0..staging_bundle.requirements.size)
         .map_err(|_| "Couldn't acquire a mapping writer to the staging buffer!")?;
+      debug_assert!(writer.len() >= required_bytes);
       for y in 0..img.height() as usize {
-        let row = &(*img)[y * (img.width() as usize) * image_stride..(y + 1) * (img.width() as usize) * image_stride];
+        let row = &(*img)[y * row_size..(y + 1) * row_size];
         let dest_base = y * row_pitch as usize;
+        debug_assert!(
+          writer.len() >= dest_base + row.len(),
+          "wl:{}, rb:{}, dbrl:{}, y:{}, ih:{}, iw:{}, p/pxs:{}",
+          writer.len(),
+          required_bytes,
+          dest_base + row.len(),
+          y,
+          img.height(),
+          img.width(),
+          row_pitch / pixel_size as u32,
+        );
         writer[dest_base..dest_base + row.len()].copy_from_slice(row);
       }
       device
@@ -393,7 +406,7 @@ impl HalState {
       .ok_or("Couldn't find a graphical Adapter!")?;
 
     // Open A Device and take out a QueueGroup
-    let (mut device, mut queue_group) = {
+    let (device, mut queue_group) = {
       let queue_family = adapter
         .queue_families
         .iter()
@@ -580,37 +593,64 @@ impl HalState {
     // Create Our CommandBuffers
     let command_buffers: Vec<_> = framebuffers.iter().map(|_| command_pool.acquire_command_buffer()).collect();
 
-    // Build our pipeline and vertex buffer
-    let (descriptor_set_layouts, descriptor_pool, descriptor_set, pipeline_layout, gfx_pipeline) =
-      Self::create_pipeline(&mut device, extent, &render_pass)?;
+    let scope_result: Result<_, &'static str> = crossbeam::thread::scope(|scope| {
+      // spawn the parsing and loading work
+      let tex_handle = scope.spawn(|_| {
+        // 4. You create the actual descriptors which you want to write into the
+        //    allocated descriptor set (in this case an image and a sampler)
+        LoadedImage::new(
+          &adapter,
+          &device,
+          &mut command_pool,
+          &mut queue_group.queues[0],
+          image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
+        )
+      });
 
-    const F32_XY_RGB_UV_QUAD: usize = size_of::<f32>() * (2 + 3 + 2) * 4;
-    let vertices = BufferBundle::new(&adapter, &device, F32_XY_RGB_UV_QUAD, BufferUsage::VERTEX)?;
+      // do our "here" work
+      let r_dsl_dp_ds_pl_gp_v_i: Result<_, &'static str> = (|| {
+        let (descriptor_set_layouts, descriptor_pool, descriptor_set, pipeline_layout, gfx_pipeline) =
+          Self::create_pipeline(&device, extent, &render_pass)?;
 
-    const U16_QUAD_INDICES: usize = size_of::<u16>() * 2 * 3;
-    let indexes = BufferBundle::new(&adapter, &device, U16_QUAD_INDICES, BufferUsage::INDEX)?;
+        const F32_XY_RGB_UV_QUAD: usize = size_of::<f32>() * (2 + 3 + 2) * 4;
+        let vertices = BufferBundle::new(&adapter, &device, F32_XY_RGB_UV_QUAD, BufferUsage::VERTEX)?;
 
-    // Write the index data just once.
-    unsafe {
-      let mut data_target = device
-        .acquire_mapping_writer(&indexes.memory, 0..indexes.requirements.size)
-        .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
-      const INDEX_DATA: &[u16] = &[0, 1, 2, 2, 3, 0];
-      data_target[..INDEX_DATA.len()].copy_from_slice(&INDEX_DATA);
-      device
-        .release_mapping_writer(data_target)
-        .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
-    }
+        const U16_QUAD_INDICES: usize = size_of::<u16>() * 2 * 3;
+        let indexes = BufferBundle::new(&adapter, &device, U16_QUAD_INDICES, BufferUsage::INDEX)?;
 
-    // 4. You create the actual descriptors which you want to write into the
-    //    allocated descriptor set (in this case an image and a sampler)
-    let texture = LoadedImage::new(
-      &adapter,
-      &device,
-      &mut command_pool,
-      &mut queue_group.queues[0],
-      image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
-    )?;
+        // Write the index data just once.
+        unsafe {
+          let mut data_target = device
+            .acquire_mapping_writer(&indexes.memory, 0..indexes.requirements.size)
+            .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
+          const INDEX_DATA: &[u16] = &[0, 1, 2, 2, 3, 0];
+          data_target[..INDEX_DATA.len()].copy_from_slice(&INDEX_DATA);
+          device
+            .release_mapping_writer(data_target)
+            .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
+        }
+
+        Ok((
+          descriptor_set_layouts,
+          descriptor_pool,
+          descriptor_set,
+          pipeline_layout,
+          gfx_pipeline,
+          vertices,
+          indexes,
+        ))
+      })();
+
+      let r_texture = tex_handle.join().map_err(|_| "Failed to join on the worker thread!");
+
+      r_dsl_dp_ds_pl_gp_v_i.and_then(|pipe_stuff| r_texture.map(|texture| Ok((pipe_stuff, texture))))
+    })
+    .map_err(|_| "Scoped thread did a panic!")?;
+
+    let here_result = scope_result?;
+    let (here, tex_result) = here_result?;
+    let (descriptor_set_layouts, descriptor_pool, descriptor_set, pipeline_layout, gfx_pipeline, vertices, indexes) = here;
+    let texture = tex_result?;
 
     // 5. You write the descriptors into the descriptor set using
     //    write_descriptor_sets which you pass a set of DescriptorSetWrites
@@ -664,7 +704,7 @@ impl HalState {
 
   #[allow(clippy::type_complexity)]
   fn create_pipeline(
-    device: &mut back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
+    device: &back::Device, extent: Extent2D, render_pass: &<back::Backend as Backend>::RenderPass,
   ) -> Result<
     (
       Vec<<back::Backend as Backend>::DescriptorSetLayout>,
