@@ -131,13 +131,36 @@ how you get that magical [Nine Nines
 Stability](https://en.wikipedia.org/wiki/Erlang_(programming_language)), after
 all ;3
 
+Note that we need to restart hal if we detect a window size change, but _also_
+if we're using `Mailbox` mode it's possible for the GPU to try and present a
+frame in the moment between when the window resizes and when we detect the error
+and respond. To cover this case, we'll also try to restart hal if we get any
+rendering error.
+
 ```rust
-if inputs.new_frame_size.is_some() {
-  drop(hal_state);
-  hal_state = match HalState::new(&winit_state.window) {
-    Ok(state) => state,
-    Err(e) => panic!(e),
-  };
+loop {
+  let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
+  if inputs.end_requested {
+    break;
+  }
+  if inputs.new_frame_size.is_some() {
+    debug!("Window changed size, restarting HalState...");
+    drop(hal_state);
+    hal_state = match HalState::new(&winit_state.window) {
+      Ok(state) => state,
+      Err(e) => panic!(e),
+    };
+  }
+  local_state.update_from_input(inputs);
+  if let Err(e) = do_the_render(&mut hal_state, &local_state) {
+    error!("Rendering Error: {:?}", e);
+    debug!("Auto-restarting HalState...");
+    drop(hal_state);
+    hal_state = match HalState::new(&winit_state.window) {
+      Ok(state) => state,
+      Err(e) => panic!(e),
+    };
+  }
 }
 ```
 

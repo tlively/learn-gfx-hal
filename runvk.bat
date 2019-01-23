@@ -1,1 +1,1 @@
-cargo run --example shaders --features="vulkan"
+cargo run --example textures --features="vulkan"

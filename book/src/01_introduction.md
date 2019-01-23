@@ -42,5 +42,4 @@ reviewing all that stuff together.
 
 The code all assumes that you're using **Rust 2018**.
 
-I set rustfmt to have 2 space indents and a line limit of 130. I hope you're
-fine with that.
+I set rustfmt to have 2 space indents and a line limit of 100.
