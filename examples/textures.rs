@@ -343,8 +343,9 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
         .map_err(|_| "Couldn't wait for the fence!")?;
       device.destroy_fence(upload_fence);
 
-      // 11. Destroy the staging bundle now that we're done with it
+      // 11. Destroy the staging bundle and one shot buffer now that we're done
       staging_bundle.manually_drop(device);
+      command_pool.free(Some(cmd_buffer));
 
       Ok(Self {
         image: ManuallyDrop::new(the_image),

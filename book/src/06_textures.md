@@ -387,24 +387,63 @@ most commonly used one. They support most of the file formats and pixel types
 you'd need.
 
 ```rust
+impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
   pub fn new<C: Capability + Supports<Transfer>>(
-    adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>, command_queue: &mut CommandQueue<B, C>,
-    img: image::RgbaImage,
+    adapter: &Adapter<B>, device: &D, command_pool: &mut CommandPool<B, C>,
+    command_queue: &mut CommandQueue<B, C>, img: image::RgbaImage,
   ) -> Result<Self, &'static str> {
     unsafe {
 ```
 
+## Figure Out Some Memory Stuff.
+
+First, before we actually do any GPU interaction, we need to double check on
+some values we'll be using. See, we're going to make a buffer for this whole
+upload process, as you might guess. However, unlike with vertex data, the
+backend is allowed to be more picky about the memory alignment of image data. We
+have to have the individual values aligned properly (eg: `u32` aligned to 4
+bytes), but we _also_ have to have the rows of the image aligned to their own
+alignment.
+
+Some image memory needs a little extra padding between rows to be optimal. The
+Adapter has a field for the physical device, and that has a method to get the
+limits. Those limits include a `min_buffer_copy_pitch_alignment` field, which is
+a fairly poor name perhaps, but it means how well aligned the entire row of of
+pixels in an image have to be. For example, we might need to align each row into
+a 4 unit wide buffer, so if we have some little picture that's 50x50 we'd need
+to place it into a buffer that's actually 52 pixels wide to match the alignment.
+
+We take the `min_buffer_copy_pitch_alignment` and do a little math to basically
+"round up" our starting row size to the next aligned value. This will give us a
+row "pitch" value for the buffer that will always be equal to or greater than
+the image's size in our CPU memory.
+
+```rust
+      // 0. First we compute some memory related values.
+      let pixel_size = size_of::<image::Rgba<u8>>();
+      let row_size = pixel_size * (img.width() as usize);
+      let limits = adapter.physical_device.limits();
+      let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
+      let row_pitch = ((row_size as u32 + row_alignment_mask) & !row_alignment_mask) as usize;
+      debug_assert!(row_pitch as usize >= row_size);
+```
+
+Okay, now we're ready to focus on the actual upload process.
+
 ## Make A Staging Buffer
 
 In the past we've been able to map memory which we can directly write into our
-buffers. This is because we've been using CPU_VISIBLE memory, which for most
-Vulkan vendors means the memory being used is in CPU RAM, not on VRAM which is
-on the graphics device. If we used this for an image, sampling (reading) that
-image would be very, very slow. So instead, what we want to do is make an image
-that uses DEVICE_LOCAL memory, which will be much faster RAM which is on the GPU
-itself, but it also means that we can't map the memory and copy to it directly.
-We have to make a "staging buffer", copy our image into that, then tell the GPU
-to copy from the staging buffer into the actual image memory. Yes, really.
+buffers (the Vertex Buffer and Index Buffer). This is because we've been using
+`CPU_VISIBLE` memory, which for most Vulkan vendors means the memory being used
+is in CPU RAM, not in VRAM which is on the graphics card. If we used this for an
+image, sampling that image (aka "reading it") would be very, _very_ slow.
+Instead, what we want to do is make an image that uses a different type of
+memory called `DEVICE_LOCAL` (that is, "local to the graphics device"). It's RAM
+that's actually on the graphics card itself, much faster for the GPU to use.
+However, being close to the GPU means it's far from us (we're the CPU). It's so
+far that you actually can't even get there from here. We have to make a "staging
+buffer", copy our image from CPU memory into that, then tell the GPU to copy
+from the staging buffer into the actual image memory. Yes, really.
 
 For the staging buffer we can use the `BufferBundle` type, and we want the usage
 to be "transfer source".
@@ -412,39 +451,28 @@ to be "transfer source".
 ```rust
       // 1. make a staging buffer with enough memory for the image, and a
       //    transfer_src usage
-      let required_bytes = size_of::<image::Rgba<u8>>() * img.width() as usize * img.height() as usize;
-      let staging_bundle = BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
+      let required_bytes = row_pitch * img.height() as usize;
+      let staging_bundle =
+        BufferBundle::new(&adapter, device, required_bytes, BufferUsage::TRANSFER_SRC)?;
 ```
 
 ## Write To The Staging Buffer
 
 Now that our staging buffer is created, we can "stage" the data into it.
 
-Except that instead of just copying the image data in pixel-for-pixel, we want
-to respect something called 'row pitch'. The GPU will often prefer to have some
-extra empty memory space between the data for each row of an image. Usually when
-storing an image, you'd just keep each pixel bumped directly up to the next,
-with no space between rows. In this case, we want to keep each pixel next to its
-neighbors within the same row, but we want to have some number of empty bytes
-between each row.
-
-So we have to be very round-about and copy one row of pixels at a time. First we
-query the graphics device for its 'limits' which will tell us its preferred row
-pitch, then we use that to copy in the data, leaving that 'pitch' between each
-row.
+Except, remember that alignment issue? _Sometimes_ the buffer will have a pitch
+that's exactly as big as our image's width, and sometimes it will have a bigger
+pitch. So we can't do a straight copy like we've done in the past. We have to do
+a row-wise copy.
 
 ```rust
       // 2. use mapping writer to put the image data into that buffer
-      let limits = adapter.physical_device.limits();
-      let row_alignment_mask = limits.min_buffer_copy_pitch_alignment as u32 - 1;
-      let image_stride = size_of::<image::Rgba<u8>>();
-      let row_pitch = (img.width() * image_stride as u32 + row_alignment_mask) & !row_alignment_mask;
       let mut writer = device
         .acquire_mapping_writer::<u8>(&staging_bundle.memory, 0..staging_bundle.requirements.size)
         .map_err(|_| "Couldn't acquire a mapping writer to the staging buffer!")?;
       for y in 0..img.height() as usize {
-        let row = &(*img)[y * (img.width() as usize) * image_stride..(y + 1) * (img.width() as usize) * image_stride];
-        let dest_base = y * row_pitch as usize;
+        let row = &(*img)[y * row_size..(y + 1) * row_size];
+        let dest_base = y * row_pitch;
         writer[dest_base..dest_base + row.len()].copy_from_slice(row);
       }
       device
@@ -452,14 +480,17 @@ row.
         .map_err(|_| "Couldn't release the mapping writer to the staging buffer!")?;
 ```
 
-See that part where we iterate the picture rows and the writer rows in the same
-direction? If we needed to flip our image data around we'd iterate one of them
-in the opposite direction (doesn't matter which) and then our image would get
-uploaded with a vertical flip applied.
+See that part where we iterate the picture rows and the writer rows in the
+_same_ direction? If we needed to flip our image data around we'd iterate one of
+them in the _opposite_ direction (doesn't matter which) and then our image would
+get uploaded with a vertical flip applied.
 
 ## Make An Image
 
-Now we make an Image on the Device with [create_image](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_image).
+Now we make an Image on the Device with
+[create_image](https://docs.rs/gfx-hal/0.1.0/gfx_hal/device/trait.Device.html#tymethod.create_image).
+This is just a description of what the image will be like. Like with Buffers, an
+Image doesn't automatically have any memory bound to it.
 
 * `kind` looks like just the dimensionality of the image, but it's [actually
   complex enough to need a huge
@@ -498,7 +529,8 @@ Now we make an Image on the Device with [create_image](https://docs.rs/gfx-hal/0
 
 Next we want to allocate some memory for the image and bind it to the image.
 This works _very close_ to how it works with the `BufferBundle` type. However,
-instead of memory that's `CPU_VISIBLE`, we want memory that's `DEVICE_LOCAL`.
+remember that instead of memory that's `CPU_VISIBLE`, we want memory that's
+`DEVICE_LOCAL`.
 
 ```rust
       // 4. allocate memory for the image and bind it
@@ -511,7 +543,8 @@ instead of memory that's `CPU_VISIBLE`, we want memory that's `DEVICE_LOCAL`.
         .enumerate()
         .find(|&(id, memory_type)| {
           // BIG NOTE: THIS IS DEVICE LOCAL NOT CPU VISIBLE
-          requirements.type_mask & (1 << id) != 0 && memory_type.properties.contains(Properties::DEVICE_LOCAL)
+          requirements.type_mask & (1 << id) != 0
+            && memory_type.properties.contains(Properties::DEVICE_LOCAL)
         })
         .map(|(id, _)| MemoryTypeId(id))
         .ok_or("Couldn't find a memory type to support the image!")?;
@@ -523,38 +556,61 @@ instead of memory that's `CPU_VISIBLE`, we want memory that's `DEVICE_LOCAL`.
         .map_err(|_| "Couldn't bind the image memory!")?;
 ```
 
-The same thing applies here as with the `BufferBundle`, in a program with many
-textures you'd need to use a sub-allocator to limit your total allocations. This
-is fine for now though.
+The same note applies here as with the `BufferBundle`: in a program with many
+textures you'd need to grab a big block of memory and use a sub-allocator to
+pick out actual image memory yourself because there's a limit on total
+allocations among GPU memory. This is fine for now though.
 
 ## Create An `ImageView` And `Sampler`
 
-We don't use it immediately, but later on we'll need to have both an ImageView
-and Sampler for our Image, so we'll make them right now and store them in the
-`LoadedImage` struct.
+We don't use it immediately, but later on we'll need to have both an `ImageView`
+and `Sampler` for our Image, so we'll make them right now and store them in the
+`LoadedImage` struct. Conceptually, the LoadedImage would just be somewhat
+incomplete without them.
 
-In gfx-hal, there are basically three 'levels' of both image and buffer
-resources. First there's the Memory, which is a handle to a specific piece of
+In `gfx-hal`, there are basically three "levels" of both image and buffer
+resources. First there's the `Memory`, which is a handle to a specific piece of
 device memory, which is where the raw data for that resource is stored. Then
-there's the `Buffer` or `Image` itself, which is information about the size,
-planned usage, and any special properties of the resource contained in the
-backing memory. Finally there is the resource view. In this case, that's an
-`ImageView`, but there are also `BufferView`s, we just haven't had a need for
-them yet. The view is like a window into a resource, it describes how (the type
-of data, pixel format, etc) and which part of the resource to view.
+there's the `Buffer` or `Image`, which is information about the size, planned
+usage, and any special properties of the resource contained in the backing
+memory. Finally there is the resource view. In this case, that's an `ImageView`,
+but there are also `BufferView`s that we just haven't used yet. The view is like
+a window into a resource, it describes how to think of it (the type of data,
+pixel format, etc) and which part of the resource to view. You're even allowed
+to have more than one view into the same resource, if you want.
 
-However, in order to use an image in a shader, we also want to use what is
-called a `Sampler`. Often times in a graphics program, we will not want to get
-the direct value of a specific pixel in a texture, but rather we want to get the
-color of a texture at some *relative* point. This relative point will often be
-in between exact pixels. The sampler describes how we want gfx-hal to
-interpolate between the colors of a texture to return a final single color when
-the place we are sampling is in between pixels. Samplers in gfx-hal are created
-and used in a similar way to other resources, like images and buffers, but in
-reality they arejust a struct of a few settings, most importantly the
-interpolation mode as I said before, and the behavior we want if the sampling
-point we give is off the image: Do we wan to wrap it around back to the front of
-the image? Just use the edge pixel color? Etc.
+On top of the `ImageView` layer we also want to use what is called a `Sampler`.
+This is what lets us use the image data within a shader. In a graphics program
+you usually don't want the direct value of a specific pixel in a texture,
+instead you want to get the color of a texture at some *relative* point,
+probably "between" two pixels. What _exactly_ does that mean? The `Sampler`
+decides what it means.
+
+The sampler describes how we want the shader to interpolate between the colors
+of a texture, including how to "zoom" the image to be bigger or smaller if it's
+being stretched across a space that doesn't match the original image size.
+Samplers are created and used in a similar way to other device resources. The
+[SamplerInfo::new](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/struct.SamplerInfo.html#method.new)
+method can do the work here, because using defaults for most of the stuff is
+fine.
+
+* We pick a
+  [Filter](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/enum.Filter.html), which
+  determines how to pick the color that's at a "sub-pixel" location. `Nearest`
+  picks all color from just one pixel, whichever pixel the point would be at if
+  you rounded the floating point position into an integer position. This gives
+  results that are usually sharp and blocky. There's also `Linear` which does a
+  color blend between the pixels around the fractional location, weighted by how
+  far the location is towards each side. So if 2 is green and 3 is white, pixel
+  2.9 is 90% white and 10% green. The blend happens in however many dimensions
+  the image has, so a 1D image is a linear blend, a 2D image is a "bilinear"
+  blend, and so on. This gives results that are smoother looking.
+* We also pick a
+  [WrapMode](https://docs.rs/gfx-hal/0.1.0/gfx_hal/image/enum.WrapMode.html).
+  Texture coordinates are in the 0.0 to 1.0 range, and if you access something
+  outside of that it's not actually an error like accessing outside a slice
+  bound is. Instead, the `WrapMode` determines how the out of bounds location is
+  translated to be back in bounds.
 
 ```rust
       // 5. create image view and sampler
@@ -587,11 +643,15 @@ over and over are `MultiShot`. They both implement
 [Shot](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/trait.Shot.html). It's
 basically what it sounds like, one can be reused and one can't. At the end of
 the loading process we'll be throwing this shot away
-([Hamilton](https://www.youtube.com/watch?v=Ic7NqP_YGlg) would be quite upset
-with us), so we'll make a `OneShot` buffer this time around. `OneShot` buffers
-are actually less restrictive than `MultiShot` buffers, but the graphics driver
-can sometimes make some optimizations based on the manner in which you plan to
-use the buffer, specifically in the case of `MultiShot` buffers.
+([Hamilton](https://www.youtube.com/watch?v=Ic7NqP_YGlg) would be so upset),
+that means we'll make a `OneShot` buffer this time around.
+
+`OneShot` buffers are actually less restrictive than `MultiShot` buffers, but
+the graphics driver can sometimes make some optimizations based on the manner in
+which you plan to use the buffer. If you really need to care about it, the exact
+details of what type of buffer to use when, with what video cards, with what
+drivers, it's all one of those "you have to profile it to know for sure"
+problems. We're not trying to push out that much performance yet though.
 
 ```rust
       // 6. create a command buffer
@@ -609,25 +669,29 @@ Our first command into the buffer is to transition the image memory into a new
 layout that's the best possible layout for being a transfer destination. What
 _exactly_ that means is up to the GPU, but it knows what to do.
 
-In addition, we transfer the `Access` type from none to `TRANSFER_WRITE`, which
-tells the GPU the type of access which we are going to be performing on this
-resource for now.
-
-It's important that we transition resources which we want to use in specific
-ways to the proper Layout and Access type, because performing operations which
-are not supported by the Layout/Access that a resource currently has is
-undefined behavior or an explicit error (oh no!). You can use the Vulkan spec
-for which operations are supported by each
+In addition, we transfer the `Access` type from none at all to `TRANSFER_WRITE`,
+which tells the GPU the type of access which we are going to be performing on
+this resource for now. It's important that we transition resources which we want
+to use in specific ways to the proper Layout and Access type, because performing
+operations which are not supported by the Layout/Access that a resource
+currently has isn't just a speed penalty, it's an explicit error and possibly
+even **Undefined Behavior** (oh no!). `gfx-hal` goes to a lot of trouble to make
+sure that all the backends behave like Vulkan even if they're not Vulkan, so you
+can use the Vulkan spec to know which operations are supported by each
 [Layout](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkImageLayout.html)
 and
-[Access](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkAccessFlagBits.html).
+[Access](https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkAccessFlagBits.html)
+type.
 
 ```rust
       // 7. Use a pipeline barrier to transition the image from empty/undefined
       //    to TRANSFER_WRITE/TransferDstOptimal
       let image_barrier = gfx_hal::memory::Barrier::Image {
         states: (gfx_hal::image::Access::empty(), Layout::Undefined)
-          ..(gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal),
+          ..(
+            gfx_hal::image::Access::TRANSFER_WRITE,
+            Layout::TransferDstOptimal,
+          ),
         target: &the_image,
         families: None,
         range: SubresourceRange {
@@ -656,7 +720,7 @@ Our next command is to actually do that copy from the staging buffer (in
         Layout::TransferDstOptimal,
         &[gfx_hal::command::BufferImageCopy {
           buffer_offset: 0,
-          buffer_width: img.width(),
+          buffer_width: (row_pitch / pixel_size) as u32,
           buffer_height: img.height(),
           image_layers: gfx_hal::image::SubresourceLayers {
             aspects: Aspects::COLOR,
@@ -673,21 +737,28 @@ Our next command is to actually do that copy from the staging buffer (in
       );
 ```
 
-## Transition The Image Into Shader Layout
+## Transition The Image Into Shader-Friendly Layout
 
 Just like there's a layout for being an optimal destination, there's also a
 layout for being an optimal place for a shader to read from, and an access type
 for being read from a shader. We've gotta issue a pipeline barrier for this
 transition too. There are other ways to transition resources which should be
 used instead of pipeline barriers when possible (specifically, between render
-Subpasses), but in this case pipeline barriers are required.
+Subpasses), but in this case pipeline barriers are required (as always, "more on
+that in future lessons").
 
 ```rust
       // 9. use pipeline barrier to transition the image to SHADER_READ access/
       //    ShaderReadOnlyOptimal layout
       let image_barrier = gfx_hal::memory::Barrier::Image {
-        states: (gfx_hal::image::Access::TRANSFER_WRITE, Layout::TransferDstOptimal)
-          ..(gfx_hal::image::Access::SHADER_READ, Layout::ShaderReadOnlyOptimal),
+        states: (
+          gfx_hal::image::Access::TRANSFER_WRITE,
+          Layout::TransferDstOptimal,
+        )
+          ..(
+            gfx_hal::image::Access::SHADER_READ,
+            Layout::ShaderReadOnlyOptimal,
+          ),
         target: &the_image,
         families: None,
         range: SubresourceRange {
@@ -705,15 +776,17 @@ Subpasses), but in this case pipeline barriers are required.
 
 ## Submit That Buffer!
 
-With all our command written we submit the buffer. Except we don't have a fence
+With all our commands written we submit the buffer. Except we don't have a fence
 for the GPU to signal us when the whole thing is done. Well, it's not like we're
 uploading whole images every frame, so we'll just make a temporary fence and
-then destroy it.
+then destroy it after.
 
 ```rust
       // 10. Submit the cmd buffer to queue and wait for it
       cmd_buffer.finish();
-      let upload_fence = device.create_fence(false).map_err(|_| "Couldn't create an upload fence!")?;
+      let upload_fence = device
+        .create_fence(false)
+        .map_err(|_| "Couldn't create an upload fence!")?;
       command_queue.submit_nosemaphores(Some(&cmd_buffer), Some(&upload_fence));
       device
         .wait_for_fence(&upload_fence, core::u64::MAX)
@@ -721,13 +794,15 @@ then destroy it.
       device.destroy_fence(upload_fence);
 ```
 
-## Destroy The Staging Buffer
+## Destroy The Other Temporary Resources
 
-We're all done, but we can't forget to clean up that staging buffer
+We're all done, but we can't forget to clean up that staging buffer, and also
+free that `OneShot` command buffer.
 
 ```rust
-      // 11. Destroy the staging bundle now that we're done with it
+      // 11. Destroy the staging bundle and one shot buffer now that we're done
       staging_bundle.manually_drop(device);
+      command_pool.free(Some(cmd_buffer));
 ```
 
 ## Success!
@@ -747,61 +822,62 @@ We've finally uploaded an image!
 
 # Shading The Image Onto The Quad
 
-To actually use this image we've got more work. Of course, that dumb graphics
-pipeline of ours has to change yet again to accommodate this new thing. So we'll
-have to make some changes to `create_pipeline`.
+To actually use this image we've got more work ahead of us. Of course, that dumb
+graphics pipeline of ours has to change yet again to accommodate this new thing.
+So we'll have to make some changes to `create_pipeline`.
 
 ## DescriptorSetLayout
 
-First we need a DescriptorSetLayout, which defines the *layout* of the
-resources, which we will later bind as `Descriptors`, which we can access in the
-shader. Note that we are *not* yet binding the *actual resources* which we want
-to use, only describing the kind and place in which those resources will have to
-go. As you'll see later, as long as we follow this layout, we can bind multiple
-different resources into the same slots. We need a SampledImage and a Sampler.
-Like with other shader stuff, the `binding` will be important later on in the
-shader itself, the numbers we pick here will have to match the numbers there.
+First we need a `DescriptorSetLayout`, which is a backend specific definition of
+the _layout_ of the resources in the graphics pipeline process. Later we'll bind
+those as `Descriptors`, which we can access in the shader.
+
+To be clear: we are not yet binding the actual resources which we want to use,
+only describing the kind and place in which those resources will have to go. As
+you'll see later, as long as we follow this layout, we can bind multiple
+different resources into the same slots. We need a `SampledImage` and a
+`Sampler`. Like with other shader stuff, the `binding` value here has to match
+the number that the GLSL code will use.
 
 ```rust
       // 1. you make a DescriptorSetLayout which is the layout of one descriptor
       //    set
-      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> = vec![unsafe {
-        device
-          .create_descriptor_set_layout(
-            &[
-              DescriptorSetLayoutBinding {
-                binding: 0,
-                ty: gfx_hal::pso::DescriptorType::SampledImage,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-              },
-              DescriptorSetLayoutBinding {
-                binding: 1,
-                ty: gfx_hal::pso::DescriptorType::Sampler,
-                count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
-                immutable_samplers: false,
-              },
-            ],
-            &[],
-          )
-          .map_err(|_| "Couldn't make a DescriptorSetLayout")?
-      }];
+      let descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout> =
+        vec![unsafe {
+          device
+            .create_descriptor_set_layout(
+              &[
+                DescriptorSetLayoutBinding {
+                  binding: 0,
+                  ty: gfx_hal::pso::DescriptorType::SampledImage,
+                  count: 1,
+                  stage_flags: ShaderStageFlags::FRAGMENT,
+                  immutable_samplers: false,
+                },
+                DescriptorSetLayoutBinding {
+                  binding: 1,
+                  ty: gfx_hal::pso::DescriptorType::Sampler,
+                  count: 1,
+                  stage_flags: ShaderStageFlags::FRAGMENT,
+                  immutable_samplers: false,
+                },
+              ],
+              &[],
+            )
+            .map_err(|_| "Couldn't make a DescriptorSetLayout")?
+        }];
 ```
 
 ## DescriptorPool
 
-Your actual `Descriptors`, which can be thought of as bindings that let us
-access resources from shaders, as well as the `DescriptorSet`s which they are
-bound into, come out of a `DescriptorPool`, which you make from the Device.
-Unlike with the command pool, we have to decide how much of each kind of
-descriptor, as well as how many sets, we'll ever allocate out of this thing
-ahead of time. The number of Descriptors is *shared* between all descriptor
-sets, so only tell it you want one SampledImage and one Sampler, but two
-descriptor sets, then bind one Sampler and SampledImage in the first set, the
-second set must be empty because you already used up all the Descriptors you
-said you wanted.
+Next we need a [DescriptorPool](DescriptorPool). This comes from our `Device`,
+and allows us to actually allocate some `Descriptor` and `DescriptorSet` values.
+Unlike with the CommandPool, we have to decide how much of each kind of
+descriptor, as well as how many sets, we'll _ever_ allocate out of this thing
+ahead of time.
+
+The number of Descriptors is shared between all descriptor sets. We only want
+one SampledImage and one Sampler, both in a single set.
 
 ```rust
       // 2. you create a descriptor pool, and when making that descriptor pool
@@ -827,14 +903,14 @@ said you wanted.
       };
 ```
 
-Technically you could either steps 1 or 2 first, as long as they're both done
+Technically you could do either steps 1 or 2 first, as long as they're both done
 before step 3.
 
 ## Allocate A DescriptorSet
 
-With a layout and a pool, we're ready to allocate a DescriptorSet. A
-DescriptorSet is a set of desctiptors in a specific layout. When it's first
-created, there still aren't actual Descriptors written into the set yet, so
+With a layout and a pool, we're ready to actually allocate a `DescriptorSet`. A
+DescriptorSet is a set of descriptors in some specific layout. When it's first
+created, there _still_ aren't actual Descriptors written into the set yet, so
 that's the next thing we'll have to do.
 
 ```rust
@@ -848,10 +924,9 @@ that's the next thing we'll have to do.
 
 ## Create The Descriptors You Want To Write
 
-At this point you'd make the actual descriptors you'd want to write. In this
-case that's the Image (well, specifically the ImageView) and the Sampler that
-are part of our `LoadedImage`. So, in the `HalState` startup we'll load up the
-image after we call `create_pipeline`.
+At this point you'd make the actual descriptors you'd want to write. For us
+that's the ImageView and the Sampler that are part of our `LoadedImage`. So, in
+the `HalState` startup we'll load up the image after we call `create_pipeline`.
 
 ```rust
     // 4. You create the actual descriptors which you want to write into the
@@ -861,7 +936,9 @@ image after we call `create_pipeline`.
       &device,
       &mut command_pool,
       &mut queue_group.queues[0],
-      image::load_from_memory(CREATURE_BYTES).expect("Binary corrupted!").to_rgba(),
+      image::load_from_memory(CREATURE_BYTES)
+        .expect("Binary corrupted!")
+        .to_rgba(),
     )?;
 ```
 
@@ -876,8 +953,7 @@ Once all the resources which will be bound as `Descriptors` and the
 `DescriptorSet` exist at the same time (after `create_pipeline` and after we
 have our `LoadedImage`), we can write the one into the other. This binds the
 specific ImageView (being used as a SampledImage descriptor) and Sampler (being
-used as a Sampler descriptor) which we created into that specific DescriptorSet.
-
+used as a Sampler descriptor) to that specific DescriptorSet.
 
 ```rust
     // 5. You write the descriptors into the descriptor set using
@@ -889,7 +965,10 @@ used as a Sampler descriptor) which we created into that specific DescriptorSet.
           set: &descriptor_set,
           binding: 0,
           array_offset: 0,
-          descriptors: Some(gfx_hal::pso::Descriptor::Image(texture.image_view.deref(), Layout::Undefined)),
+          descriptors: Some(gfx_hal::pso::Descriptor::Image(
+            texture.image_view.deref(),
+            Layout::Undefined,
+          )),
         },
         gfx_hal::pso::DescriptorSetWrite {
           set: &descriptor_set,
@@ -904,32 +983,39 @@ used as a Sampler descriptor) which we created into that specific DescriptorSet.
 ## Bind The Descriptor Set During Render Pass Encoding
 
 Lastly, when we're doing all of our binding for the render pass, we have to bind
-this stuff too.If you had multiple images which you wanted to bind into the same
-shader program at different times, you'd create multiple DescriptorSets and then
-write the different resources into those different DescriptorSets and then
-finally bind the different set before the draw call. You can also bind more than
-one set per draw call, but the uses for this are a bit more complicated so we
-won't go into that for now.
+this stuff too. If you had multiple images which you wanted to bind into the
+same shader program at different times, you'd create multiple DescriptorSets and
+then write the different resources into those different DescriptorSets and then
+finally bind the correct set before each draw call. You can also bind more than
+one set into a single draw call, but the uses for that are a bit more
+complicated ("for another lesson").
 
 ```rust
         // 6. You actually bind the descriptor set in the command buffer before
         //    the draw call using bind_graphics_descriptor_sets
-        encoder.bind_graphics_descriptor_sets(&self.pipeline_layout, 0, Some(self.descriptor_set.deref()), &[]);
+        encoder.bind_graphics_descriptor_sets(
+          &self.pipeline_layout,
+          0,
+          Some(self.descriptor_set.deref()),
+          &[],
+        );
 ```
 
-We've got it a in few places, but that `deref` call there is to make the `Deref`
-trait on the `ManuallyDrop` wrapper trigger, because just using `&` doesn't do
-it (probably because `bind_graphics_descriptor_sets` is so generic that `rustc`
-actually gets confused about what we're even trying to tell it).
+Note 1: We've got it a in few places, but that `deref` call there is to make the
+`Deref` trait on the `ManuallyDrop` wrapper trigger, because just using `&`
+doesn't do it. probably because `bind_graphics_descriptor_sets` is so generic
+that `rustc` actually gets confused about what we're even trying to say.
 
-Side note: here we're using `Some(thing)` instead of making an `ArrayVec` of
-length 1. It's ultimately the same (since the generic here is for
-`IntoIterator`), and arguably easier to use this way. However, I wanted to make
-sure that you knew how to do the `ArrayVec` version, so it got shown off first.
-Using `Some(thing)` is quick and easy, but it caps you at one element instead of
-allowing for as many elements as you want with the `ArrayVec` (just change the
-length value). Of course, if you don't know how many things you'll be passing at
-compile time (for whatever reason) you can also use a normal `Vec`.
+Note 2: here we're using `Some(thing)` instead of making another `ArrayVec` of
+length 1. I think we already did it above in this lesson too. It's ultimately
+the same effect (since the generic here is for `IntoIterator`), and arguably
+easier to use this way. However, I wanted to make sure that you knew how to do
+the `ArrayVec` version, so it got shown off first. Using `Some(thing)` is quick
+and easy, but it locks you at one element instead of allowing for as many
+elements as you want with the `ArrayVec` (by just change the length value). Of
+course, if you don't know how many things you'll be passing at compile time (for
+whatever reason) you can also use a normal `Vec` (we're trying to avoid
+allocations as much as we can though!).
 
 ## Update The Vertex Shader
 
@@ -967,8 +1053,9 @@ layout(set = 0, binding = 1) uniform sampler samp;
 ```
 
 Notice the `binding`s here match up with what we put all the way back in our
-`DescriptorSetLayout` and the `set` matches with the index (in the iterator)
-of the `DescriptorSet` we passed into `bind_graphics_descriptor_sets`.
+`DescriptorSetLayout`. The `set` value is matched up with the position of the
+`DescriptorSet` within the `IntoIterator` that we passed to
+`bind_graphics_descriptor_sets`.
 
 Then in `main` we form a `sampler2D` from the `texture2D` and `sampler` put
 together. This lets us call the
@@ -980,10 +1067,10 @@ We could output this directly, but just for fun (and to show off a little more
 of what a fragment shader can do) we'll use the time value to shift between the
 texture data and the rainbow color data. This is a snap to do with the
 [mix](https://www.khronos.org/registry/OpenGL-Refpages/gl4/html/mix.xhtml)
-function. It takes two colors, and a portion from 0.0 to 1.0 for how much the
-_second_ color should determine the output (it's a linear interpolation, if
-you're familiar with the term). We'll cover this in more detail later on. For
-now it's okay to just know that it works.
+function. It takes two colors, and a portion (from 0.0 to 1.0) for how much the
+_second_ color should determine the output (it's just a linear interpolation, if
+you remember that from the sampler stuff above). We'll cover this in more detail
+later on. For now it's okay to just know that it works.
 
 ```glsl
 #version 450
