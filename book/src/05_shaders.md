@@ -15,15 +15,15 @@ _potentially_ use a very wide range of options.
 For **now** now we're using a slightly special variant of GLSL, which stands for
 "open Graphics Library Shader Language", be cause it's technically the official
 language for OpenGL, not Vulkan. Still, everyone already knew GLSL when Vulkan
-came out, and it's actually quite good at the jobs, so they kept the text format
-and just specified how to compile it to a new binary format.
+came out, and it's actually quite good at what it does, so they kept the textual
+format and just specified how to compile it to a new binary format.
 
 The `shaderc-rs` crate that we're using compiles the textual GLSL into the
 binary SPIRV for us. More precisely, the `shaderc-rs` crate's `build.rs` file
 downloads the source of the `shaderc` C++ program and builds that, then puts
 those binaries deep in your `target/` directory, then when you call the crate it
 invokes that program to do the actual compilation. And it fails if the binaries
-aren't there. Ahe crate itself doesn't know how to do any compilation at all.
+aren't there. The crate itself doesn't know how to do any compilation at all.
 
 If you think that sounds crazy, you're right. People are working on better
 solutions, [top men](https://www.youtube.com/watch?v=yoy4_h7Pb3M), I assure you,
@@ -34,14 +34,17 @@ Now there's a whole lot that can be said about GLSL. You can seriously write
 and [demo site](https://www.shadertoy.com/) after [demo
 site](https://www.vertexshaderart.com/) after [demo
 site](http://glslsandbox.com/) after [demo
-site](https://www.interactiveshaderformat.com/) for just GLSL. It's well out of
-scope of this lesson or even this entire tutorial to try and cover it all.
-Seriously you should read that book stuff and blog stuff and anything else you
-can about GLSL if you really want to know it all.
+site](https://www.interactiveshaderformat.com/) for just GLSL.
 
-What we're doing here is an _introduction_ to the GLSL that we'll be using with
-`gfx-hal` (which is basically normal GLSL, but with a few things you have to be
-more clear about).
+We'll cover some _introduction_ level GLSL in this lesson, and it's fairly
+straight forward so I don't think we'll need to specifically focus on it too
+much later on. It's a "based on C" language with minimal extensibility, so you
+can learn all the limits of the language itself fairly fast.
+
+However, even once you quickly pick up all the rules of the language, you should
+still read the books and blogs and sites and things like that because they teach
+you how to actually apply those simple rules. Like the difference between
+learning how to play chess and learning to be good at playing chess.
 
 ## Version
 
@@ -284,15 +287,15 @@ So easy... that we'll keep going and add a little bit more to the lesson.
 # Push Constants
 
 Last lesson I said that most of the time you don't re-upload vertex data every
-frame. That's because usually you'd have a single model (an "iconic triangle")
-and then you'd tell the shader what animation frame, or position, or global
-light level, or whatever else without touching the model data directly. It
-doesn't seem like a big difference right now when there's only 3 vertex entries
-in one triangle, but if there's _thousands_ of vertex entries, and there's
-_tens_ of copies of that model that have to show up in the scene, well you'd
-rather be doing all that math on your GPU (with dozens of ALUs) than on your CPU
-(with only a handful of ALUs). That's like, the whole _point_ of the GPU after
-all.
+frame. That's because usually you'd have a single model (an "iconic triangle" if
+you will) and then you'd tell the shader what animation frame, or position, or
+global light level, or other detail to use during the drawing without touching
+the model data directly. It doesn't seem like a big difference right now when
+there's only 3 vertex entries in one triangle, but if there's _thousands_ of
+vertex entries, and there's _tens_ of copies of that model that have to show up
+in the scene, well you'd rather be doing all that math on your GPU (with dozens
+of ALUs) than on your CPU (with only a handful of ALUs). That's like, the whole
+_point_ of the GPU after all.
 
 So how do we know about these special global values during a draw call? They get
 placed into things called _uniforms_, that's what the `uniform` keyword is for
@@ -321,10 +324,16 @@ our triangle towards black.
 ## Add It To Our `HalState`
 
 We first add an
-[Instant](https://doc.rust-lang.org/std/time/struct.Instant.html) to our
-`HalState`.
+[Instant](https://doc.rust-lang.org/std/time/struct.Instant.html) field to our
+`HalState` and then use `Instant::now` to get an Instant while we're
+initializing our HalState value.
 
-Before we record the command buffer, we'll decide the current time value as an `f32`.
+Before we record the command buffer, we'll decide the current time value as an
+`f32`. Please note that `f32` is actually a [very
+bad](https://randomascii.wordpress.com/2012/02/13/dont-store-that-in-a-float/)
+way to store time in the long term (that's why `Duration` has two integer values
+instead of a single float value), but it's fine for our short term animation
+purposes here.
 
 ```rust
     // DETERMINE THE TIME DATA
@@ -401,7 +410,7 @@ Like I said, there's a harsh limit on your push constant space. If you want more
 global data than you can fit into your push constants you need to setup a
 Uniform Buffer.
 
-However, I also promised to keep this lesson short, and we'll be using uniform,
-buffers for Textures during the next lesson, so we _won't_ go into them right
-now. Knowing about push constants already teaches you about the general idea of
-uniform data, so we've covered enough to stop here.
+However, I also promised to keep this lesson short, and we'll be using uniform
+buffers soon enough I'm sure, so we _won't_ go into them right now. Knowing
+about push constants already teaches you about the general idea of uniform data,
+so we've covered enough to stop here.
