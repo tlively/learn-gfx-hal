@@ -105,16 +105,27 @@ pub fn cast_slice<T: Pod, U: Pod>(ts: &[T]) -> Option<&[U]> {
       return None;
     }
   }
-  let byte_size = size_of::<T>() * ts.len();
-  let (new_count, new_overflow) = (byte_size / size_of::<U>(), byte_size % size_of::<U>());
-  if new_overflow > 0 {
-    return None;
-  } else {
+  if size_of::<T>() == size_of::<U>() {
+    // same size, so we direct cast, keeping the old length
     unsafe {
       Some(core::slice::from_raw_parts(
         ts.as_ptr() as *const U,
-        new_count,
+        ts.len(),
       ))
+    }
+  } else {
+    // we might have slop, which would cause us to fail
+    let byte_size = size_of::<T>() * ts.len();
+    let (new_count, new_overflow) = (byte_size / size_of::<U>(), byte_size % size_of::<U>());
+    if new_overflow > 0 {
+      return None;
+    } else {
+      unsafe {
+        Some(core::slice::from_raw_parts(
+          ts.as_ptr() as *const U,
+          new_count,
+        ))
+      }
     }
   }
 }
@@ -192,12 +203,12 @@ const THE_CUBE: Cube = Cube {
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_INDEXES: [u16; 36] = [
-   1,  0,  2,  1,  2,  3, // front
-   5,  4,  6,  6,  7,  5, // top
-   9, 10,  8, 10,  9, 11, // back
-  14, 12, 13, 13, 15, 14, // bottom
-  17, 16, 18, 18, 19, 17, // left
-  21, 20, 22, 22, 23, 21, // right
+   0,  1,  2,  2,  1,  3, // front
+   4,  5,  6,  7,  6,  5, // top
+  10,  9,  8,  9, 10, 11, // back
+  12, 14, 13, 15, 13, 14, // bottom
+  16, 17, 18, 19, 18, 17, // left
+  20, 21, 22, 23, 22, 21, // right
 ];
 
 pub struct BufferBundle<B: Backend, D: Device<B>> {
@@ -1149,19 +1160,25 @@ impl HalState {
     // /*
     self.model_matrix = nalgebra_glm::rotate(
       &self.model_matrix,
-      0.005,
-      &nalgebra_glm::make_vec3(&[1.0, -1.0, 0.5]).normalize(),
+      -0.005,
+      &nalgebra_glm::make_vec3(&[0.0, 1.0, 0.0]).normalize(),
     );
     // */
     let view = nalgebra_glm::look_at_lh(
       &nalgebra_glm::make_vec3(&[0.0, 0.0, 2.0]),
       &nalgebra_glm::make_vec3(&[0.0, 0.0, 0.0]),
-      &nalgebra_glm::make_vec3(&[0.0, -1.0, 0.0]).normalize(),
+      &nalgebra_glm::make_vec3(&[0.0, 1.0, 0.0]).normalize(),
     );
-    let projection =
+    let mut projection =
       nalgebra_glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
+    projection[(1, 1)] *= -1.0;
     let mvp = projection
       * view
+      * nalgebra_glm::rotate(
+        &nalgebra_glm::identity(),
+        core::f32::consts::PI / 4.0,
+        &nalgebra_glm::make_vec3(&[0.0, 0.0, 1.0]).normalize(),
+      )
       * self.model_matrix
       * nalgebra_glm::translate(
         &nalgebra_glm::identity(),
