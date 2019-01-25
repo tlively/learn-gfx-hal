@@ -1,1 +1,1 @@
-cargo run --example textures --features="vulkan"
+cargo run --example coordinates --features="vulkan"

@@ -7,3 +7,4 @@
 * [Triangle Intro](04_triangle_intro.md)
 * [Shaders](05_shaders.md)
 * [Textures](06_textures.md)
+* [Coordinates](07_coordinates.md)

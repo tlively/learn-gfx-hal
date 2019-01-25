@@ -1,1 +1,1 @@
-cargo run --example textures --features="dx12"
+cargo run --example coordinates --features="dx12"
