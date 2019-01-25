@@ -183,3 +183,11 @@ being horizontal and `v` being vertical.
 
 * U: 0.0 to 1.0, +U goes right
 * V: 0.0 to 1.0, +V goes down
+
+# NOTES
+
+perspective is your cameras's lense
+
+view is the position of your camera
+
+model is where you set the object in front of your camera

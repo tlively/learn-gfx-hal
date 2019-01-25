@@ -192,10 +192,10 @@ const THE_CUBE: Cube = Cube {
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_INDEXES: [u16; 36] = [
-   0,  1,  2,  2,  1,  3, // front
+   1,  0,  2,  1,  2,  3, // front
    5,  4,  6,  6,  7,  5, // top
    9, 10,  8, 10,  9, 11, // back
-  12, 14, 13, 15, 13, 14, // bottom
+  14, 12, 13, 13, 15, 14, // bottom
   17, 16, 18, 18, 19, 17, // left
   21, 20, 22, 22, 23, 21, // right
 ];
@@ -1143,20 +1143,20 @@ impl HalState {
 
     // DETERMINE THE TIME DATA
     let duration = Instant::now().duration_since(self.creation_instant);
-    let time_f32 = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9;
+    let _time_f32 = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9;
 
     // DETERMINE MVP MATRIX
-    /*
+    // /*
     self.model_matrix = nalgebra_glm::rotate(
       &self.model_matrix,
       0.005,
       &nalgebra_glm::make_vec3(&[1.0, -1.0, 0.5]).normalize(),
     );
-    */
+    // */
     let view = nalgebra_glm::look_at_lh(
-      &nalgebra_glm::make_vec3(&[0.0, 0.0, -2.0]),
+      &nalgebra_glm::make_vec3(&[0.0, 0.0, 2.0]),
       &nalgebra_glm::make_vec3(&[0.0, 0.0, 0.0]),
-      &nalgebra_glm::make_vec3(&[0.0, 1.0, 0.0]).normalize(),
+      &nalgebra_glm::make_vec3(&[0.0, -1.0, 0.0]).normalize(),
     );
     let projection =
       nalgebra_glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
