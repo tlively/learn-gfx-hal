@@ -188,10 +188,16 @@ const THE_CUBE: Cube = Cube {
     Vertex { xyz: [1.0, 1.0, 1.0], uv: [1.0, 0.0] }, /* top right */
   ]
 };
+//10,9,8,9,10,11
 
+#[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_INDEXES: [u16; 36] = [
-  0, 1, 2, 2, 1, 3, 4, 5, 6, 7, 6, 5, 10, 9, 8, 9, 10, 11, 12, 13, 14, 15, 14, 13, 16, 17, 18, 19,
-  18, 17, 20, 21, 22, 23, 22, 21,
+   0,  1,  2,  2,  1,  3, // front
+   5,  4,  6,  6,  7,  5, // top
+   9, 10,  8, 10,  9, 11, // back
+  12, 14, 13, 15, 13, 14, // bottom
+  17, 16, 18, 18, 19, 17, // left
+  21, 20, 22, 22, 23, 21, // right
 ];
 
 pub struct BufferBundle<B: Backend, D: Device<B>> {
@@ -452,6 +458,7 @@ pub struct HalState {
   creation_instant: Instant,
   cube_vertices: BufferBundle<back::Backend, back::Device>,
   cube_indexes: BufferBundle<back::Backend, back::Device>,
+  model_matrix: nalgebra_glm::Mat4x4,
   texture: LoadedImage<back::Backend, back::Device>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
   descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
@@ -786,6 +793,7 @@ impl HalState {
       creation_instant: Instant::now(),
       cube_vertices,
       cube_indexes,
+      model_matrix: nalgebra_glm::identity(),
       texture,
       descriptor_pool: ManuallyDrop::new(descriptor_pool),
       descriptor_set: ManuallyDrop::new(descriptor_set),
@@ -1138,17 +1146,27 @@ impl HalState {
     let time_f32 = duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9;
 
     // DETERMINE MVP MATRIX
-    let model = nalgebra_glm::rotate(
-      &nalgebra_glm::identity(),
-      time_f32 * 0.5,
-      &nalgebra_glm::make_vec3(&[1.0, 0.1, 0.0]).normalize(),
-    );
     /*
-    let view: nalgebra_glm::Mat4x4 = nalgebra_glm::identity();
-    let projection =
-      nalgebra_glm::perspective_rh_zo(800.0 / 600.0, f32::to_radians(60.0), -1.0, 2.0);
+    self.model_matrix = nalgebra_glm::rotate(
+      &self.model_matrix,
+      0.005,
+      &nalgebra_glm::make_vec3(&[1.0, -1.0, 0.5]).normalize(),
+    );
     */
-    let mvp = model; // * view * projection;
+    let view = nalgebra_glm::look_at_lh(
+      &nalgebra_glm::make_vec3(&[0.0, 0.0, -2.0]),
+      &nalgebra_glm::make_vec3(&[0.0, 0.0, 0.0]),
+      &nalgebra_glm::make_vec3(&[0.0, 1.0, 0.0]).normalize(),
+    );
+    let projection =
+      nalgebra_glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
+    let mvp = projection
+      * view
+      * self.model_matrix
+      * nalgebra_glm::translate(
+        &nalgebra_glm::identity(),
+        &nalgebra_glm::make_vec3(&[-0.5, -0.5, -0.5]),
+      );
     assert!(size_of_val(&mvp) < 128);
     let mvp_slice =
       cast_slice::<f32, u32>(&mvp.data).expect("this can never fail for same-aligned data");
