@@ -327,6 +327,181 @@ draw method, but we're well on the way to cubes.
 
 # New Buffer Data
 
+Let's put that cube data in our buffers!
+
+## Defining A `Vertex` Type
+
+As promised, we'll finally define a type for the Vertex format.
+
+First, it must be `repr(C)`. Second, we'll give it a static function to spit out
+the appropriate `Vec<AttributeDesc>` for the type. That way the two definitions
+sit as close as possible in the code and we're more likely to change both at the
+same time if one of them has a change.
+
+```rust
+#[derive(Debug, Clone, Copy)]
+#[repr(C)]
+pub struct Vertex {
+  xyz: [f32; 3],
+  uv: [f32; 2],
+}
+impl Vertex {
+  pub fn attributes() -> Vec<AttributeDesc> {
+    let position_attribute = AttributeDesc {
+      location: 0,
+      binding: 0,
+      element: Element {
+        format: Format::Rgb32Float,
+        offset: 0,
+      },
+    };
+    let uv_attribute = AttributeDesc {
+      location: 1,
+      binding: 0,
+      element: Element {
+        format: Format::Rg32Float,
+        offset: size_of::<[f32; 3]>() as ElemOffset,
+      },
+    };
+    vec![position_attribute, uv_attribute]
+  }
+}
+```
+
+## Define The Cube Vertexes
+
+Now at the minimum a cube needs 8 points. However, to make the textures show up
+properly we'll need to have 6 quads so that the triangles can wind properly.
+This means that we'll need 24 vertexes. Unfortunate.
+
+```rust
+#[cfg_attr(rustfmt, rustfmt_skip)]
+const CUBE_VERTEXES: [Vertex; 24] = [
+  // Face 1 (front)
+  Vertex { xyz: [0.0, 0.0, 0.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [0.0, 1.0, 0.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [1.0, 0.0, 0.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [1.0, 1.0, 0.0], uv: [1.0, 0.0] }, /* top right */
+  // Face 2 (top)
+  Vertex { xyz: [0.0, 1.0, 0.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [0.0, 1.0, 1.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [1.0, 1.0, 0.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [1.0, 1.0, 1.0], uv: [1.0, 0.0] }, /* top right */
+  // Face 3 (back)
+  Vertex { xyz: [0.0, 0.0, 1.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [0.0, 1.0, 1.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [1.0, 0.0, 1.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [1.0, 1.0, 1.0], uv: [1.0, 0.0] }, /* top right */
+  // Face 4 (bottom)
+  Vertex { xyz: [0.0, 0.0, 0.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [0.0, 0.0, 1.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [1.0, 0.0, 0.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [1.0, 0.0, 1.0], uv: [1.0, 0.0] }, /* top right */
+  // Face 5 (left)
+  Vertex { xyz: [0.0, 0.0, 1.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [0.0, 1.0, 1.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [0.0, 0.0, 0.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [0.0, 1.0, 0.0], uv: [1.0, 0.0] }, /* top right */
+  // Face 6 (right)
+  Vertex { xyz: [1.0, 0.0, 0.0], uv: [0.0, 1.0] }, /* bottom left */
+  Vertex { xyz: [1.0, 1.0, 0.0], uv: [0.0, 0.0] }, /* top left */
+  Vertex { xyz: [1.0, 0.0, 1.0], uv: [1.0, 1.0] }, /* bottom right */
+  Vertex { xyz: [1.0, 1.0, 1.0], uv: [1.0, 0.0] }, /* top right */
+];
+```
+
+## Define The Cube Indexes
+
+Of course, we need some indexes to go with the vertexes. We have to be very
+careful here because if you get the winding on your triangles wrong things look
+very bad very fast.
+
+```rust
+#[cfg_attr(rustfmt, rustfmt_skip)]
+const CUBE_INDEXES: [u16; 36] = [
+   0,  1,  2,  2,  1,  3, // front
+   4,  5,  6,  7,  6,  5, // top
+  10,  9,  8,  9, 10, 11, // back
+  12, 14, 13, 15, 13, 14, // bottom
+  16, 17, 18, 19, 18, 17, // left
+  20, 21, 22, 23, 22, 21, // right
+];
+```
+
+## Other Stuff
+
+At this point you can figure out the rest yourself, and you can look at the
+final code if there's a bit you're missing, but basically we want to fix up
+`HalState` to have a field for the cube vertex buffer and the cube index buffer.
+
+```rust
+  cube_vertices: BufferBundle<back::Backend, back::Device>,
+  cube_indexes: BufferBundle<back::Backend, back::Device>,
+```
+
+And then you want to fill those up just once during initialization.
+
+```rust
+    let cube_vertices = BufferBundle::new(
+      &adapter,
+      &device,
+      size_of_val(&CUBE_VERTEXES),
+      BufferUsage::VERTEX,
+    )?;
+
+    // Write the vertex data just once.
+    unsafe {
+      let mut data_target = device
+        .acquire_mapping_writer(&cube_vertices.memory, 0..cube_vertices.requirements.size)
+        .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
+      data_target[..CUBE_VERTEXES.len()].copy_from_slice(&CUBE_VERTEXES);
+      device
+        .release_mapping_writer(data_target)
+        .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
+    }
+
+    let cube_indexes = BufferBundle::new(
+      &adapter,
+      &device,
+      size_of_val(&CUBE_INDEXES),
+      BufferUsage::INDEX,
+    )?;
+
+    // Write the index data just once.
+    unsafe {
+      let mut data_target = device
+        .acquire_mapping_writer(&cube_indexes.memory, 0..cube_indexes.requirements.size)
+        .map_err(|_| "Failed to acquire an index buffer mapping writer!")?;
+      data_target[..CUBE_INDEXES.len()].copy_from_slice(&CUBE_INDEXES);
+      device
+        .release_mapping_writer(data_target)
+        .map_err(|_| "Couldn't release the index buffer mapping writer!")?;
+    }
+```
+
+In the graphics pipeline we need to change the rasterizer so that the back faces
+of each triangle are culled. Without the culling, you'll get a bizarre looking
+thing where the insides and the outsides of the cubes are drawn at the same
+time. Like something Escher might draw.
+
+```rust
+      let rasterizer = Rasterizer {
+        depth_clamping: false,
+        polygon_mode: PolygonMode::Fill,
+        cull_face: Face::BACK,
+        front_face: FrontFace::Clockwise,
+        depth_bias: None,
+        conservative: false,
+      };
+```
+
+Finally we need to change up the push_constants to be 16 floats in the Vertex
+shader instead of 1 float in the fragment shader:
+
+```rust
+      let push_constants = vec![(ShaderStageFlags::VERTEX, 0..16)];
+```
+
 # New Shaders
 
 Of course we'll need our GLSL to use the new data properly too.
@@ -396,8 +571,77 @@ fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(
 }
 ```
 
-But our `LocalState` has actually started to become interesting. Now we've got a
-list of cubes to maintain.
+## Time Per Frame
+
+Last lesson we just tracked the time since the program started. That's fine if
+your animation follows a perfect and immutable pattern (like sine wave shifting
+between two modes), but most things aren't like that. Most of the time we want
+to know the amount of time per frame so that we can apply that much time towards
+an animation that might or might not be happening.
+
+So we'll start tracking a time per frame. This will be a very basic "Semi-fixed
+Time Step" scheme (there's an [article all about
+it](https://gafferongames.com/post/fix_your_timestep/)). Basically, each time
+through the loop we'll accumulate some time. If there's enough time accumulated
+we'll advance the "state" of our program (in our case we rotate the cubes some).
+
+### UserInput
+
+First we have to adjust the `UserInput` type so that the time taken is part of
+the input for the frame. It could go just about anywhere as long as we check the
+time once per frame, but if we consider the timing to be part of the input then
+at some future point we could just start recording inputs and then playing them
+back and they'll play back with the right timing. Bam, we've got looped replay
+for practically nothing.
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct UserInput {
+  pub end_requested: bool,
+  pub new_frame_size: Option<(f64, f64)>,
+  pub new_mouse_position: Option<(f64, f64)>,
+  pub seconds: f32,
+}
+```
+
+Now when we make a `UserInput` value we'll also take the timestamp from the last frame:
+
+```rust
+  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut SystemTime) -> Self {
+```
+
+And after the call to `poll_events` we also set the `seconds` field.
+
+```rust
+    output.seconds = {
+      let now = SystemTime::now();
+      let res_dur = now.duration_since(*last_timestamp);
+      *last_timestamp = now;
+      match res_dur {
+        Ok(duration) => duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9,
+        Err(ste) => {
+          let duration = ste.duration();
+          -(duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9)
+        }
+      }
+    };
+```
+
+You might be wondering what's going on with that match thing. Well, a
+[Duration](https://doc.rust-lang.org/std/time/struct.Duration.html) is
+technically always some positive value. That's easy to do with
+[Instant](https://doc.rust-lang.org/std/time/struct.Instant.html), since it's a
+magical always increasing clock. However, we can't actually use `Instant` since
+that magical element also makes it not always run at the same speed. We want
+consistent speeds, so we'll use
+[SystemTime](https://doc.rust-lang.org/std/time/struct.SystemTime.html).
+However, the system clock _can_ go backwards. In the rare case that this
+happens, the duration gets returned as an error case. It's still the correct
+delta time, but you have to negate the value since it's a negative delta.
+
+### LocalState
+
+Now we update `LocalState` to track the spare time we had from last time:
 
 ```rust
 #[derive(Debug, Clone, Default)]
@@ -407,12 +651,20 @@ pub struct LocalState {
   pub mouse_x: f64,
   pub mouse_y: f64,
   pub cubes: Vec<glm::TMat4<f32>>,
+  pub spare_time: f32,
 }
 ```
 
-Every frame when we "update" we'll use the mouse position to rotate each cube
-some. We'll just pick an angle based on the mouse's position, and each cube can
-be a faster rotation the farther it is in the list I guess.
+And every frame when we update, we'll use 1/60th of a second of time if it's
+available. This makes the physics work as smoothly as possible. Of course, in a
+full program you'd need some more checks before you blindly perform however many
+physics frames all at once. If the system clock goes backwards maybe skip doing
+physics that frame. If the system clock jumps forward too many frames at once
+maybe cap out at some handful and discard the rest. And ideally you'd need to
+make sure that your computation time per frame is _on average_ less than the
+actual time otherwise your leftover time would grow forever and the system would
+chug slower and slower. Time has a lot of fiddly bits to get right if you want
+to be robust about it.
 
 ```rust
 impl LocalState {
@@ -425,16 +677,30 @@ impl LocalState {
       self.mouse_x = position.0;
       self.mouse_y = position.1;
     }
+    assert!(self.frame_width != 0.0 && self.frame_height != 0.0);
     let x_axis = (self.mouse_x / self.frame_width) as f32;
     let y_axis = (self.mouse_y / self.frame_height) as f32;
-    for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
-      let r = 0.5 * (i as f32 + 1.0);
-      *cube_mut = glm::rotate(
-        &cube_mut,
-        f32::to_radians(r),
-        &glm::make_vec3(&[x_axis, y_axis, 0.0]).normalize(),
-      );
+    self.spare_time += input.seconds;
+    const ONE_SIXTIETH: f32 = 1.0 / 60.0;
+    while self.spare_time > 0.0 {
+      for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
+        let r = ONE_SIXTIETH * 30.0 * (i as f32 + 1.0);
+        *cube_mut = glm::rotate(
+          &cube_mut,
+          f32::to_radians(r),
+          // if you change z to 0.0 you need to assert that x_axis and y_axis
+          // don't also end up as 0.0, otherwise you'll get NaN when you
+          // normalize and then you'll get NaN in your matrix and then nothing
+          // will display.
+          &glm::make_vec3(&[x_axis, y_axis, 0.3]).normalize(),
+        );
+      }
+      self.spare_time -= ONE_SIXTIETH;
     }
   }
 }
 ```
+
+As to the actual "physics" we're doing, we'll just rotate the cubes some. Since
+I still want a little interaction, so we'll have the mouse position control the
+angle of rotation.

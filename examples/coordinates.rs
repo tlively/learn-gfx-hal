@@ -43,6 +43,7 @@ use gfx_hal::{
   Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use nalgebra_glm as glm;
+use std::time::SystemTime;
 use winit::{
   dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent,
 };
@@ -83,6 +84,10 @@ void main()
 
 pub static CREATURE_BYTES: &[u8] = include_bytes!("creature.png");
 
+/// DO NOT USE THE VERSION OF THIS FUNCTION THAT'S IN THE GFX-HAL CRATE.
+///
+/// It can trigger UB if you upcast from a low alignment to a higher alignment
+/// type. You'll be sad.
 pub fn cast_slice<T: Pod, U: Pod>(ts: &[T]) -> Option<&[U]> {
   use core::mem::{align_of, size_of};
   // Handle ZST (this all const folds)
@@ -191,7 +196,6 @@ const CUBE_VERTEXES: [Vertex; 24] = [
   Vertex { xyz: [1.0, 0.0, 1.0], uv: [1.0, 1.0] }, /* bottom right */
   Vertex { xyz: [1.0, 1.0, 1.0], uv: [1.0, 0.0] }, /* top right */
 ];
-//10,9,8,9,10,11
 
 #[cfg_attr(rustfmt, rustfmt_skip)]
 const CUBE_INDEXES: [u16; 36] = [
@@ -1187,6 +1191,15 @@ impl HalState {
         for model in models.iter() {
           // DETERMINE FINAL MVP MATRIX (once per model)
           let mvp = vp * model;
+          for d in mvp.data.iter() {
+            if d.is_nan() {
+              dbg!(model);
+              dbg!(view);
+              dbg!(projection);
+              dbg!(mvp);
+              assert!(false);
+            }
+          }
           encoder.push_graphics_constants(
             &self.pipeline_layout,
             ShaderStageFlags::VERTEX,
@@ -1325,10 +1338,11 @@ pub struct UserInput {
   pub end_requested: bool,
   pub new_frame_size: Option<(f64, f64)>,
   pub new_mouse_position: Option<(f64, f64)>,
+  pub seconds: f32,
 }
 
 impl UserInput {
-  pub fn poll_events_loop(events_loop: &mut EventsLoop) -> Self {
+  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut SystemTime) -> Self {
     let mut output = UserInput::default();
     events_loop.poll_events(|event| match event {
       Event::WindowEvent {
@@ -1349,6 +1363,18 @@ impl UserInput {
       }
       _ => (),
     });
+    output.seconds = {
+      let now = SystemTime::now();
+      let res_dur = now.duration_since(*last_timestamp);
+      *last_timestamp = now;
+      match res_dur {
+        Ok(duration) => duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9,
+        Err(ste) => {
+          let duration = ste.duration();
+          -(duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9)
+        }
+      }
+    };
     output
   }
 }
@@ -1360,6 +1386,7 @@ pub struct LocalState {
   pub mouse_x: f64,
   pub mouse_y: f64,
   pub cubes: Vec<glm::TMat4<f32>>,
+  pub spare_time: f32,
 }
 
 impl LocalState {
@@ -1372,15 +1399,25 @@ impl LocalState {
       self.mouse_x = position.0;
       self.mouse_y = position.1;
     }
+    assert!(self.frame_width != 0.0 && self.frame_height != 0.0);
     let x_axis = (self.mouse_x / self.frame_width) as f32;
     let y_axis = (self.mouse_y / self.frame_height) as f32;
-    for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
-      let r = 0.5 * (i as f32 + 1.0);
-      *cube_mut = glm::rotate(
-        &cube_mut,
-        f32::to_radians(r),
-        &glm::make_vec3(&[x_axis, y_axis, 0.0]).normalize(),
-      );
+    self.spare_time += input.seconds;
+    const ONE_SIXTIETH: f32 = 1.0 / 60.0;
+    while self.spare_time > 0.0 {
+      for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
+        let r = ONE_SIXTIETH * 30.0 * (i as f32 + 1.0);
+        *cube_mut = glm::rotate(
+          &cube_mut,
+          f32::to_radians(r),
+          // if you change z to 0.0 you need to assert that x_axis and y_axis
+          // don't also end up as 0.0, otherwise you'll get NaN when you
+          // normalize and then you'll get NaN in your matrix and then nothing
+          // will display.
+          &glm::make_vec3(&[x_axis, y_axis, 0.3]).normalize(),
+        );
+      }
+      self.spare_time -= ONE_SIXTIETH;
     }
   }
 }
@@ -1398,29 +1435,32 @@ fn main() {
     Ok(state) => state,
     Err(e) => panic!(e),
   };
-
-  let (frame_width, frame_height) = winit_state
-    .window
-    .get_inner_size()
-    .map(|logical| logical.into())
-    .unwrap_or((0.0, 0.0));
-  let mut local_state = LocalState {
-    frame_width,
-    frame_height,
-    mouse_x: 0.0,
-    mouse_y: 0.0,
-    cubes: vec![
-      glm::identity(),
-      glm::translate(&glm::identity(), &glm::make_vec3(&[1.5, 0.1, 0.0])),
-      glm::translate(&glm::identity(), &glm::make_vec3(&[-3.0, 2.0, 3.0])),
-      glm::translate(&glm::identity(), &glm::make_vec3(&[0.5, -4.0, 4.0])),
-      glm::translate(&glm::identity(), &glm::make_vec3(&[-3.4, -2.3, 1.0])),
-      glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
-    ],
+  let mut local_state = {
+    let (frame_width, frame_height) = winit_state
+      .window
+      .get_inner_size()
+      .map(|logical| logical.into())
+      .unwrap_or((0.0, 0.0));
+    LocalState {
+      frame_width,
+      frame_height,
+      mouse_x: 0.0,
+      mouse_y: 0.0,
+      cubes: vec![
+        glm::identity(),
+        glm::translate(&glm::identity(), &glm::make_vec3(&[1.5, 0.1, 0.0])),
+        glm::translate(&glm::identity(), &glm::make_vec3(&[-3.0, 2.0, 3.0])),
+        glm::translate(&glm::identity(), &glm::make_vec3(&[0.5, -4.0, 4.0])),
+        glm::translate(&glm::identity(), &glm::make_vec3(&[-3.4, -2.3, 1.0])),
+        glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
+      ],
+      spare_time: 0.0,
+    }
   };
+  let mut last_timestamp = SystemTime::now();
 
   loop {
-    let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop);
+    let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop, &mut last_timestamp);
     if inputs.end_requested {
       break;
     }
