@@ -184,10 +184,257 @@ being horizontal and `v` being vertical.
 * U: 0.0 to 1.0, +U goes right
 * V: 0.0 to 1.0, +V goes down
 
-# NOTES
+# Drawing A Cube
 
-perspective is your cameras's lense
+So, now that we've got a bit of an understanding of where our numbers need to
+go, we just adjust the program a little bit. This time instead of doing a lot of
+work in the fragment shader we're going to have the biggest change with the
+fragment shader.
 
-view is the position of your camera
+## The Draw Call
 
-model is where you set the object in front of your camera
+Okay so we're gonna draw one cube. In fact, now that we can put things in
+different places and have it all show up properly, we'll draw _many_ cubes. What
+will define our cubes? Not vertex data any more. We're done with that. Now there
+will be a _single_ set of cube vertex data. Instead, a particular cube will be
+defined by a model matrix to translate the local model points into world space
+points. So drawing a series of cubes means we accept a slice of models and then
+loop over each one.
+
+```rust
+pub fn draw_cubes_frame(&mut self, models: &[glm::TMat4<f32>]) -> Result<(), &'static str> {
+```
+
+The setup with picking our fences and such is the same as before, but then we
+get to the new stuff. We need to get a Model-View-Projection Matrix to convert
+the iconic cube data into a particular cube on the screen. We'll be drawing
+several cubes, but they'll each have the same View and Projection Matrix, so
+we'll determine View and Projection first.
+
+### View Matrix
+
+The View Matrix turns World Space into "Camera Space". For our View matrix, we
+want to use
+[look_at_lh](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.look_at_lh.html).
+It's "look at, left-handed". You can also have "right-handed" coordinate systems
+(it has to do with which direction is positive as you move along each axis), but
+`gfx-hal` is a left-handed coordinate system. Any time `nalgebra_glm` lets you
+pick between the two you should pick the left-handed variant.
+
+* The first argument is _where the camera is_.
+* The second argument is _where the camera is looking_
+* The final argument is a **normalized** vector for which way is "up". The third
+  argument can generally default to `[0.0, 1.0, 0.0]`.
+
+```rust
+    // DETERMINE VIEW MATRIX (just once)
+    let view = glm::look_at_lh(
+      &glm::make_vec3(&[0.0, 0.0, -5.0]),
+      &glm::make_vec3(&[0.0, 0.0, 0.0]),
+      &glm::make_vec3(&[0.0, 1.0, 0.0]).normalize(),
+    );
+```
+
+Remember that +Z is "into the screen", so we'll be starting a little "back" from
+the world origin, looking at the world origin, and with the default up vector.
+
+### Projection Matrix
+
+The Projection Matrix turns Camera Space into "Normalized Device Coordinates"
+(NDC). We start with a perspective matrix, but instead of just `perspective_lh`,
+we need to add another detail. The whole GLM API was setup for OpenGL, which
+uses -1.0 to +1.0 for Z, but `gfx-hal` uses only 0.0 to 1.0 for Z. As a result,
+we need to select both the "left-handed", and also `_zo` variant of the
+perspective function, giving us
+[perspective_lh_zo](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.perspective_lh_zo.html).
+
+* The first argument is the aspect ratio of the display area. We just put our width / height and we're set.
+* The second argument is the [field of
+  view](https://en.wikipedia.org/wiki/Field_of_view_in_video_games) angle (in
+  radians). This is something that you should probably let your users customize
+  if you're making a "real" program. A comfortable field of view depends on the
+  user's physical screen size and how close they're sitting to it.
+* The third and fourth arguments are the distance to the near and far clipping
+  plane.
+
+Now once we have our Perspective calculation given to us, we need to flip the Y
+value. This makes it so that increasing Y values in World Space will cause a
+_decrease_ in the Y result within NDC space. That way when things move up in the
+world they actually go up on the screen too. Flipping all the Y values might
+sound tricky, but we just need to negate a single element in the matrix,
+position `(1,1)`.
+
+```rust
+    // DETERMINE PROJECTION MATRIX (just once)
+    let projection = {
+      let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
+      temp[(1, 1)] *= -1.0;
+      temp
+    };
+```
+
+Now, yes, I know that maybe technically we shouldn't hard code the aspect ratio,
+since we went to all that trouble to make our window resizable and everything,
+but it's fine. Consider that small detail to be homework for the dedicated
+reader.
+
+### A Combined View-Projection Matrix
+
+A matrix multiplication is actually fairly costly. For a 4x4 matrix you're doing
+16 dot products. We want to keep that down, so we'll calculate a single
+"view-projection" matrix right now (since it doesn't change per model), and then
+use it for each model that we draw.
+
+```rust
+    // COMBINE THE VIEW AND PROJECTION MATRIX AHEAD OF TIME (just once)
+    let vp = projection * view;
+```
+
+Remember, the right side of a stack of matrix transforms is the side that
+happens "first" within the total transformation. Since we want to go from Model
+Space to World Space to View Space to NDC Space, we'll have the model on the far
+right, then the view in the middle, then the projection on the left side. Since
+this doesn't have the model data yet, it's just projection on the left times the
+view.
+
+### Drawing Those Models
+
+Now that we're all set we bind the various pipeline stuff like before. This
+time, instead of writing the push constants once and then calling draw once, we
+do a loop over all the models. For each model we compute the final MVP matrix by
+going `vp * model`, push that, and then do a draw call.
+
+```rust
+        // ONE DRAW CALL PER MODEL MATRIX WE'RE GIVEN
+        for model in models.iter() {
+          // DETERMINE FINAL MVP MATRIX (once per model)
+          let mvp = vp * model;
+          encoder.push_graphics_constants(
+            &self.pipeline_layout,
+            ShaderStageFlags::VERTEX,
+            0,
+            cast_slice::<f32, u32>(&mvp.data)
+              .expect("this cast never fails for same-aligned same-size data"),
+          );
+          encoder.draw_indexed(0..36, 0, 0..1);
+        }
+```
+
+That's it! We've got cubes!
+
+Well, no, not yet, we have to setup the rest of the pipeline to support our new
+draw method, but we're well on the way to cubes.
+
+# New Buffer Data
+
+# New Shaders
+
+Of course we'll need our GLSL to use the new data properly too.
+
+## Vertex Shader
+
+This is the "interesting" part, by which I mean that it's where the coordinate
+spaces all meet up and shift around. However, it's not very interesting code to
+just look at, since it boils down to basically one expression.
+
+I said above that the "right most" part of a matrix transform stack happens
+"first", but what's it happening to? The data vector at the very far right of
+the whole final equation of course. As I glibly said at the start of the
+article, we take our 3D coordinate, add a `w` component of 1.0, and then
+multiply it through our big matrix stack. Whatever comes out the left side is
+the NDC of the position.
+
+```glsl
+#version 450
+layout (push_constant) uniform PushConsts {
+  mat4 mvp;
+} push;
+
+layout (location = 0) in vec3 position;
+layout (location = 1) in vec2 vert_uv;
+
+layout (location = 0) out gl_PerVertex {
+  vec4 gl_Position;
+};
+layout (location = 1) out vec2 frag_uv;
+
+void main()
+{
+  gl_Position = push.mvp * vec4(position, 1.0);
+  frag_uv = vert_uv;
+}
+```
+
+## Fragment Shader
+
+The fragment shader this time is simplified from last time. We don't need any
+color shifting or anything at this point, just having some boxes should be
+interesting enough to look at.
+
+```glsl
+#version 450
+layout(set = 0, binding = 0) uniform texture2D tex;
+layout(set = 0, binding = 1) uniform sampler samp;
+
+layout (location = 1) in vec2 frag_uv;
+
+layout (location = 0) out vec4 color;
+
+void main()
+{
+  color = texture(sampler2D(tex, samp), frag_uv);
+}
+```
+
+# Update The `main` Functionality
+
+So our `do_the_render` function simplifies down to just one line:
+
+```rust
+fn do_the_render(hal_state: &mut HalState, local_state: &LocalState) -> Result<(), &'static str> {
+  hal_state.draw_cubes_frame(&local_state.cubes)
+}
+```
+
+But our `LocalState` has actually started to become interesting. Now we've got a
+list of cubes to maintain.
+
+```rust
+#[derive(Debug, Clone, Default)]
+pub struct LocalState {
+  pub frame_width: f64,
+  pub frame_height: f64,
+  pub mouse_x: f64,
+  pub mouse_y: f64,
+  pub cubes: Vec<glm::TMat4<f32>>,
+}
+```
+
+Every frame when we "update" we'll use the mouse position to rotate each cube
+some. We'll just pick an angle based on the mouse's position, and each cube can
+be a faster rotation the farther it is in the list I guess.
+
+```rust
+impl LocalState {
+  pub fn update_from_input(&mut self, input: UserInput) {
+    if let Some(frame_size) = input.new_frame_size {
+      self.frame_width = frame_size.0;
+      self.frame_height = frame_size.1;
+    }
+    if let Some(position) = input.new_mouse_position {
+      self.mouse_x = position.0;
+      self.mouse_y = position.1;
+    }
+    let x_axis = (self.mouse_x / self.frame_width) as f32;
+    let y_axis = (self.mouse_y / self.frame_height) as f32;
+    for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
+      let r = 0.5 * (i as f32 + 1.0);
+      *cube_mut = glm::rotate(
+        &cube_mut,
+        f32::to_radians(r),
+        &glm::make_vec3(&[x_axis, y_axis, 0.0]).normalize(),
+      );
+    }
+  }
+}
+```
