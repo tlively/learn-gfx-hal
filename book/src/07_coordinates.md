@@ -704,3 +704,9 @@ impl LocalState {
 As to the actual "physics" we're doing, we'll just rotate the cubes some. Since
 I still want a little interaction, so we'll have the mouse position control the
 angle of rotation.
+
+And now we got spinny boxes!
+
+![coordinates-complete](images/coordinates-complete.png)
+
+As always, full code is available in the [examples directory](https://github.com/Lokathor/learn-gfx-hal/tree/master/examples).
