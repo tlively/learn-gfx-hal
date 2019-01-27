@@ -29,6 +29,21 @@ The code examples are **not** meant to be taken alone. There is effectively zero
 explanation within the code files themselves. You are **absolutely** encouraged
 to read the lesson text that goes with each example.
 
+## Learning More
+
+The lessons here mostly focus on the particulars of how to get the output you
+want with `gfx-hal`. Some information on graphical techniques in general will
+eventually be covered, but I can only cover so much material so fast.
+
+If you want a whole lot more about general graphical stuff there's a large
+number of free books on the
+[RealTimeRendering.com](http://www.realtimerendering.com/#books-small-table)
+website. It's mostly their older editions, but the math for ray tracing or
+lighting or whatever else is all is still accurate enough. Once you know enough
+about how `gfx-hal` does thing you should be able to pick any book off of that
+list and convert the techniques shown (usually C++ and OpenGL) over into your
+own code (Rust and `gfx-hal`).
+
 ## Requirements
 
 Uses [shaderc-rs](https://github.com/google/shaderc-rs), please follow [their
