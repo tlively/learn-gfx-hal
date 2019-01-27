@@ -473,56 +473,10 @@ polling method has a few more arguments.
   ) -> Self {
 ```
 
-`focused` is if we have focus in the windowing system, `grabbed` is if we've
-grabbed the mouse right now. As you can see, we're accepting the full
-`WinitState` now since we have to use the window to grab and un-grab the mouse.
+Actually, all that stuff has to do with `winit` really, so it should be in the
+`WinitState`, don't you think?
 
-When you "grab" the mouse it locks the mouse inside the window so that the
-user's cursor doesn't go back outside the window while they move it around.
-However, as a side effect of this we have to stop reading the `CursorMoved`
-events, and start reading a new type of event called a `DeviceEvent`. We'll get
-to that in just a second.
-
-First of all, we have to manually split the borrow on the two fields here,
-because rust is stupid sometimes and over borrows.
-
-```rust
-    // We have to manually split the borrow here. rustc why you so dumb sometimes?
-    let win_ref = &winit_state.window;
-    let events_mut = &mut winit_state.events_loop;
-```
-
-If we become focused, we set focused to true:
-
-```rust
-      Event::WindowEvent {
-        event: WindowEvent::Focused(true),
-        ..
-      } => {
-        debug!("Gained Focus");
-        *focused = true;
-      }
-```
-
-If we lose focus we set focused to false and _also_ release any grab we might
-have had on the mouse.
-
-```rust
-      Event::WindowEvent {
-        event: WindowEvent::Focused(false),
-        ..
-      } => {
-        debug!("Lost focus, releasing the mouse grab...");
-        win_ref
-          .grab_cursor(false)
-          .expect("Failed to release the mouse grab!");
-        win_ref.hide_cursor(false);
-        *focused = false;
-        *grabbed = false;
-      }
-```
-
-Note that on macOS you need to manually hide and 
+TODO
 
 # Quaternion Free Camera (Slightly Slower, More Freedom)
 
