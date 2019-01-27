@@ -1314,7 +1314,6 @@ impl Default for WinitState {
 pub struct UserInput {
   pub end_requested: bool,
   pub new_frame_size: Option<(f64, f64)>,
-  pub new_mouse_position: Option<(f64, f64)>,
   pub swap_projection: bool,
   pub keys_held: HashSet<VirtualKeyCode>,
   pub orientation_change: (f32, f32),
@@ -1390,12 +1389,6 @@ impl UserInput {
         output.new_frame_size = Some((logical.width, logical.height));
       }
       Event::WindowEvent {
-        event: WindowEvent::CursorMoved { position, .. },
-        ..
-      } => {
-        output.new_mouse_position = Some((position.x, position.y));
-      }
-      Event::WindowEvent {
         event:
           WindowEvent::KeyboardInput {
             input:
@@ -1452,8 +1445,6 @@ impl UserInput {
 pub struct LocalState {
   pub frame_width: f64,
   pub frame_height: f64,
-  pub mouse_x: f64,
-  pub mouse_y: f64,
   pub cubes: Vec<glm::TMat4<f32>>,
   pub camera: EulerCamera,
   pub perspective_projection: glm::TMat4<f32>,
@@ -1467,10 +1458,6 @@ impl LocalState {
     if let Some(frame_size) = input.new_frame_size {
       self.frame_width = frame_size.0;
       self.frame_height = frame_size.1;
-    }
-    if let Some(position) = input.new_mouse_position {
-      self.mouse_x = position.0;
-      self.mouse_y = position.1;
     }
     if input.swap_projection {
       self.is_orthographic = !self.is_orthographic;
@@ -1595,8 +1582,6 @@ fn main() {
     LocalState {
       frame_width,
       frame_height,
-      mouse_x: 0.0,
-      mouse_y: 0.0,
       cubes: vec![
         glm::identity(),
         glm::translate(&glm::identity(), &glm::make_vec3(&[1.5, 0.1, 0.0])),

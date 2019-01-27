@@ -477,6 +477,12 @@ polling method has a few more arguments.
 grabbed the mouse right now. As you can see, we're accepting the full
 `WinitState` now since we have to use the window to grab and un-grab the mouse.
 
+When you "grab" the mouse it locks the mouse inside the window so that the
+user's cursor doesn't go back outside the window while they move it around.
+However, as a side effect of this we have to stop reading the `CursorMoved`
+events, and start reading a new type of event called a `DeviceEvent`. We'll get
+to that in just a second.
+
 First of all, we have to manually split the borrow on the two fields here,
 because rust is stupid sometimes and over borrows.
 
