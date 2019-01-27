@@ -40,7 +40,7 @@ number of free books on the
 [RealTimeRendering.com](http://www.realtimerendering.com/#books-small-table)
 website. It's mostly their older editions, but the math for ray tracing or
 lighting or whatever else is all is still accurate enough. Once you know enough
-about how `gfx-hal` does thing you should be able to pick any book off of that
+about how `gfx-hal` does things you should be able to pick any book off of that
 list and convert the techniques shown (usually C++ and OpenGL) over into your
 own code (Rust and `gfx-hal`).
 
