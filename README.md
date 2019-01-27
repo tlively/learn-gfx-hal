@@ -16,14 +16,18 @@ This is _not_ intended to be a library crate for you to just import into your
 own projects. It is a series of examples and explanations for you read and learn
 from.
 
-* Fully working examples are in the `examples/` directory. Each example attempts
-  to be a single file that works on its own, so in some cases the code style
-  _isn't_ quite what you'd want on a full project (eg: shader code contained in
-  string literals instead of saved in separate files).
 * The lessons are in the `book/` directory in markdown form. They can be
   rendered to HTML with [mdbook](https://github.com/rust-lang-nursery/mdBook),
   and the [GitHub Pages site](https://lokathor.github.io/learn-gfx-hal/) for
   this repository hosts a rendered version of the master branch.
+* The fully working examples are in the `examples/` directory. Each example
+  attempts to be a single file that works on its own, so in some cases the code
+  style _isn't_ quite what you'd want on a full project (eg: shader code
+  contained in string literals instead of saved in separate files).
+
+The code examples are **not** meant to be taken alone. There is effectively zero
+explanation within the code files themselves. You are **absolutely** encouraged
+to read the lesson text that goes with each example.
 
 ## Requirements
 

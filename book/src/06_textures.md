@@ -384,7 +384,15 @@ queues (since graphics and compute both also support transfer), but it doesn't
 really hurt to be clear what we're looking for. Lastly we need the image to be
 uploading. We'll use the [image](https://docs.rs/image) crate because it's the
 most commonly used one. They support most of the file formats and pixel types
-you'd need.
+you'd need. At the time of writing the latest version is `0.21`.
+
+```toml
+[dependencies]
+...
+image = "0.21"
+```
+
+Now we can begin to define how to load an image:
 
 ```rust
 impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
