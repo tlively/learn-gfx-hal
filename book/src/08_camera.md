@@ -733,13 +733,15 @@ we're allowed to pass a `d_roll` value as well. We take the three deltas and
 make a delta quaternion. Then we multiply our current quaternion by this to
 "update" our orientation by the amounts requested. Remember that quaternion
 multiplications are NOT commutative (like matrix multiplications), so the order
-here is important.
+here is important. Also, we need to throw in a `quat_normalize` or the
+orientation becomes messed up after too many updates (as too much floating point
+error accumulates).
 
 ```rust
 impl FreeCamera {
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
-    self.quat = self.quat * delta_quat;
+    self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
 ```
 

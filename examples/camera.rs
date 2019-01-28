@@ -1628,7 +1628,7 @@ impl FreeCamera {
   /// Updates the orientation of the camera.
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
-    self.quat = self.quat * delta_quat;
+    self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
 
   /// Updates the position of the camera with WASDQE controls.
