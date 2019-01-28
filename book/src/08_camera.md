@@ -627,7 +627,7 @@ Next, if the user clicks in the window we'll grab the cursor. There's a literal
 but on macOS and some Linux distributions you have to issue `hide_cursor` as a separate
 command.
 We'll just do both, since it doesn't hurt to tell the already-hidden cursor to
-hide again on windows.
+hide again on Windows.
 
 ```rust
       // Left clicking in the window causes the mouse to get grabbed
