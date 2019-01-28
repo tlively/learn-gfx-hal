@@ -1410,23 +1410,6 @@ impl UserInput {
         }
       }
 
-      // Automatically release the mouse when focus is lost
-      Event::WindowEvent {
-        event: WindowEvent::Focused(false),
-        ..
-      } => {
-        if *grabbed {
-          debug!("Lost Focus, releasing the mouse grab...");
-          window
-            .grab_cursor(false)
-            .expect("Failed to release the mouse grab!");
-          window.hide_cursor(false);
-          *grabbed = false;
-        } else {
-          debug!("Lost Focus when mouse wasn't grabbed.");
-        }
-      }
-
       // Left clicking in the window causes the mouse to get grabbed
       Event::WindowEvent {
         event:
@@ -1444,6 +1427,23 @@ impl UserInput {
           window.grab_cursor(true).expect("Failed to grab the mouse!");
           window.hide_cursor(true);
           *grabbed = true;
+        }
+      }
+
+      // Automatically release the mouse when focus is lost
+      Event::WindowEvent {
+        event: WindowEvent::Focused(false),
+        ..
+      } => {
+        if *grabbed {
+          debug!("Lost Focus, releasing the mouse grab...");
+          window
+            .grab_cursor(false)
+            .expect("Failed to release the mouse grab!");
+          window.hide_cursor(false);
+          *grabbed = false;
+        } else {
+          debug!("Lost Focus when mouse wasn't grabbed.");
         }
       }
 
@@ -1483,7 +1483,7 @@ pub struct LocalState {
   pub frame_width: f64,
   pub frame_height: f64,
   pub cubes: Vec<glm::TMat4<f32>>,
-  pub camera: EulerCamera,
+  pub camera: FreeCamera,
   pub perspective_projection: glm::TMat4<f32>,
   pub orthographic_projection: glm::TMat4<f32>,
   pub is_orthographic: bool,
@@ -1515,9 +1515,16 @@ impl LocalState {
       self.spare_time -= ONE_SIXTIETH;
     }
     // do camera updates distinctly from physics, based on this frame's time
+    let mut roll = 0.0;
+    if input.keys_held.contains(&VirtualKeyCode::Z) {
+      roll -= 5.0 * input.seconds;
+    }
+    if input.keys_held.contains(&VirtualKeyCode::C) {
+      roll += 5.0 * input.seconds;
+    }
     self
       .camera
-      .update_orientation(input.orientation_change.0, input.orientation_change.1);
+      .update_orientation(input.orientation_change.0, input.orientation_change.1, roll);
     self
       .camera
       .update_position(&input.keys_held, 5.0 * input.seconds); // 5 meters / second
@@ -1561,8 +1568,9 @@ impl EulerCamera {
         });
     if move_vector != glm::zero() {
       move_vector = move_vector.normalize();
+
+      self.position += move_vector * distance;
     }
-    self.position += move_vector * distance;
   }
 
   pub fn update_orientation(&mut self, x_delta: f32, y_delta: f32) {
@@ -1587,6 +1595,53 @@ impl EulerCamera {
       position,
       pitch_deg: 0.0,
       yaw_deg: 0.0,
+    }
+  }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FreeCamera {
+  position: glm::TVec3<f32>,
+  quat: glm::Qua<f32>,
+}
+impl FreeCamera {
+  pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
+    let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
+    self.quat = delta_quat * self.quat;
+  }
+
+  pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
+    let up = glm::make_vec3(&[0.0, 1.0, 0.0]);
+    let forward = glm::make_vec3(&[0.0, 0.0, 1.0]);
+    let cross_normalized = glm::cross::<f32, glm::U3>(&forward, &up).normalize();
+    let mut move_vector =
+      keys
+        .iter()
+        .fold(glm::make_vec3(&[0.0, 0.0, 0.0]), |vec, key| match *key {
+          VirtualKeyCode::W => vec + forward,
+          VirtualKeyCode::S => vec - forward,
+          VirtualKeyCode::A => vec + cross_normalized,
+          VirtualKeyCode::D => vec - cross_normalized,
+          VirtualKeyCode::E => vec + up,
+          VirtualKeyCode::Q => vec - up,
+          _ => vec,
+        });
+    if move_vector != glm::zero() {
+      move_vector = move_vector.normalize();
+      let rotated_move_vector = glm::quat_rotate_vec3(&self.quat, &move_vector);
+      self.position += rotated_move_vector * distance;
+    }
+  }
+
+  pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
+    let mat = glm::quat_to_mat4(&self.quat);
+    glm::translate(&mat, &self.position)
+  }
+
+  pub fn at_position(position: glm::TVec3<f32>) -> Self {
+    Self {
+      position,
+      quat: glm::quat_identity(),
     }
   }
 }
@@ -1628,7 +1683,7 @@ fn main() {
         glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
       ],
       spare_time: 0.0,
-      camera: EulerCamera::at_position(glm::make_vec3(&[-10.0, 0.0, 3.0])),
+      camera: FreeCamera::at_position(glm::make_vec3(&[-10.0, 0.0, 3.0])),
       perspective_projection: {
         let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
         temp[(1, 1)] *= -1.0;

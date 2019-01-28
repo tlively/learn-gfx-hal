@@ -305,8 +305,8 @@ our position by that normalized vector times the distance.
         });
     if move_vector != glm::zero() {
       move_vector = move_vector.normalize();
+      self.position += move_vector * distance;
     }
-    self.position += move_vector * distance;
   }
 ```
 
@@ -624,14 +624,93 @@ wanted to offer that option to users.
       }
 ```
 
+Next, if the user clicks in the window we'll grab the cursor. There's a literal
+`grab_cursor` call which _on windows_ will automatically hide the cursor too,
+but on mac and some linux you have to issue `hide_cursor` as a separate command.
+We'll just do both, since it doesn't hurt to tell the already-hidden cursor to
+hide again on windows.
+
+```rust
+      // Left clicking in the window causes the mouse to get grabbed
+      Event::WindowEvent {
+        event:
+          WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+            ..
+          },
+        ..
+      } => {
+        if *grabbed {
+          debug!("Click! We already have the mouse grabbed.");
+        } else {
+          debug!("Click! Grabbing the mouse.");
+          window.grab_cursor(true).expect("Failed to grab the mouse!");
+          window.hide_cursor(true);
+          *grabbed = true;
+        }
+      }
+```
+
+If the focus is lost, we want to automatically release any "grab". This is just
+the same two calls with reverse values.
+
+```rust
+      // Automatically release the mouse when focus is lost
+      Event::WindowEvent {
+        event: WindowEvent::Focused(false),
+        ..
+      } => {
+        if *grabbed {
+          debug!("Lost Focus, releasing the mouse grab...");
+          window
+            .grab_cursor(false)
+            .expect("Failed to release the mouse grab!");
+          window.hide_cursor(false);
+          *grabbed = false;
+        } else {
+          debug!("Lost Focus when mouse wasn't grabbed.");
+        }
+      }
+```
+
+Finally, we'll update our window size still. I'm not sure we're using that any
+more, but oh well. We can just track it anyway.
+
+```rust
+      // Update our size info if the window changes size.
+      Event::WindowEvent {
+        event: WindowEvent::Resized(logical),
+        ..
+      } => {
+        output.new_frame_size = Some((logical.width, logical.height));
+      }
+```
+
+And at the end, after the event polling, we want to be sure to hand over a clone
+of the `keys_held` set _only if_ we're grabbed. Otherwise the program would do
+stuff even if it's out of focus. I'm sure there's some program that wants to do
+that, but not us.
+
+```rust
+    output.keys_held = if *grabbed {
+      keys_held.clone()
+    } else {
+      HashSet::new()
+    };
+```
+
+And everything works!
+
+Except we can't roll yet.
+
 # Quaternion Free Camera (Slightly Slower, More Freedom)
 
-Now we're gonna use
-[Quaternions](https://www.3dgep.com/understanding-quaternions/). They're not
-super covered in the Khan Academy "Vector and Matrix" math course that I linked
-before, at least not from what I saw in their lesson listing. Use that link
-there to read all about Quaternions if you want the juicy math details, because
-they're sure _weird_. They're 4D! Isn't that already pretty weird all on its
-own?
+Now we're gonna use Quaternions. They're not super covered in the Khan Academy
+"Vector and Matrix" math course that I linked last lesson, at least not from
+what I saw in their table of contents listing. Instead, try [this link
+here](https://www.3dgep.com/understanding-quaternions/) to learn all about
+them.They're sure _weird_. They're 4D! Isn't that already pretty weird all on
+its own?
 
 TODO
