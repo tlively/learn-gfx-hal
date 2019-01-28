@@ -624,7 +624,8 @@ wanted to offer that option to users.
 
 Next, if the user clicks in the window we'll grab the cursor. There's a literal
 `grab_cursor` call which _on windows_ will automatically hide the cursor too,
-but on mac and some linux you have to issue `hide_cursor` as a separate command.
+but on macOS and some Linux distributions you have to issue `hide_cursor` as a separate
+command.
 We'll just do both, since it doesn't hurt to tell the already-hidden cursor to
 hide again on windows.
 
