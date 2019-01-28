@@ -547,7 +547,7 @@ know if it got released while we didn't have focus.
       }),
 ```
 
-That would be the end of it, but MacOS is dumb and doesn't provide keys as
+That would be the end of it, but macOS doesn't provide keys as
 device events. So we need to handle keys as window events too. Also, even on
 non-mac there's a few window event keys that we want to respond do. We're
 keeping "tab swaps the projection", and also we're adding "escape undoes the
