@@ -1275,7 +1275,6 @@ pub struct WinitState {
   pub events_loop: EventsLoop,
   pub window: Window,
   pub keys_held: HashSet<VirtualKeyCode>,
-  pub focused: bool,
   pub grabbed: bool,
 }
 
@@ -1294,7 +1293,6 @@ impl WinitState {
     output.map(|window| Self {
       events_loop,
       window,
-      focused: false,
       grabbed: false,
       keys_held: HashSet::new(),
     })
@@ -1334,7 +1332,6 @@ impl UserInput {
     let events_loop = &mut winit_state.events_loop;
     let window = &mut winit_state.window;
     let keys_held = &mut winit_state.keys_held;
-    let focused = &mut winit_state.focused;
     let grabbed = &mut winit_state.grabbed;
     // now we actually poll those events
     events_loop.poll_events(|event| match event {
@@ -1360,36 +1357,64 @@ impl UserInput {
         ElementState::Released => keys_held.remove(&code),
       }),
 
-      // Always track the mouse axis, but only update the orientation if
-      // grabbed.
-      Event::DeviceEvent {
-        event: DeviceEvent::Motion { axis, value },
+      // We want to respond to some of the keys specially when they're also
+      // window events too (meaning that the window was focused when the event
+      // happened).
+      Event::WindowEvent {
+        event:
+          WindowEvent::KeyboardInput {
+            input:
+              KeyboardInput {
+                state,
+                virtual_keycode: Some(code),
+                ..
+              },
+            ..
+          },
         ..
       } => {
-        if *grabbed {
-          match axis {
-            0 => output.orientation_change.0 -= value as f32,
-            1 => output.orientation_change.1 -= value as f32,
-            _ => {
-              info!("Unknown Motion Axis ID: {}", axis);
+        #[cfg(feature = "metal")]
+        {
+          match state {
+            ElementState::Pressed => keys_held.insert(code),
+            ElementState::Released => keys_held.remove(&code),
+          }
+        };
+        if state == ElementState::Pressed {
+          match code {
+            VirtualKeyCode::Tab => output.swap_projection = !output.swap_projection,
+            VirtualKeyCode::Escape => {
+              if *grabbed {
+                debug!("Escape pressed while grabbed, releasing the mouse!");
+                window
+                  .grab_cursor(false)
+                  .expect("Failed to release the mouse grab!");
+                window.hide_cursor(false);
+                *grabbed = false;
+              }
             }
+            _ => (),
           }
         }
       }
 
-      // Track focus, automatically release the mouse when focus lost
-      Event::WindowEvent {
-        event: WindowEvent::Focused(true),
+      // Always track the mouse motion, but only update the orientation if
+      // we're "grabbed".
+      Event::DeviceEvent {
+        event: DeviceEvent::MouseMotion { delta: (dx, dy) },
         ..
       } => {
-        debug!("Gained Focus");
-        *focused = true;
+        if *grabbed {
+          output.orientation_change.0 -= dx as f32;
+          output.orientation_change.1 -= dy as f32;
+        }
       }
+
+      // Automatically release the mouse when focus is lost
       Event::WindowEvent {
         event: WindowEvent::Focused(false),
         ..
       } => {
-        *focused = false;
         if *grabbed {
           debug!("Lost Focus, releasing the mouse grab...");
           window
@@ -1429,36 +1454,6 @@ impl UserInput {
       } => {
         output.new_frame_size = Some((logical.width, logical.height));
       }
-
-      // We want to respond to some of the keys specially when they're also
-      // window events too (meaning that the window was focused when the event
-      // happened).
-      Event::WindowEvent {
-        event:
-          WindowEvent::KeyboardInput {
-            input:
-              KeyboardInput {
-                state: ElementState::Pressed,
-                virtual_keycode: Some(code),
-                ..
-              },
-            ..
-          },
-        ..
-      } => match code {
-        VirtualKeyCode::Tab => output.swap_projection = !output.swap_projection,
-        VirtualKeyCode::Escape => {
-          if *grabbed {
-            debug!("Escape pressed while grabbed, releasing the mouse!");
-            window
-              .grab_cursor(false)
-              .expect("Failed to release the mouse grab!");
-            window.hide_cursor(false);
-            *grabbed = false;
-          }
-        }
-        _ => (),
-      },
 
       _ => (),
     });

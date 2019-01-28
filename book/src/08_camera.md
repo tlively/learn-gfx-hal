@@ -481,17 +481,148 @@ Actually, all that stuff has to do with `winit` really, so it should be in the
 pub struct WinitState {
   pub events_loop: EventsLoop,
   pub window: Window,
-  pub focused: bool,
-  pub cursor_entered: bool,
-  pub grabbed: bool,
   pub keys_held: HashSet<VirtualKeyCode>,
+  pub grabbed: bool,
 }
 ```
 
-So what we're trying to express here is that we're tracking the mouse moving
-around, and there's an increasing level of mouse interaction with the program.
+Alright, and now our match statement is totally different, so we'll take it
+again from the top. First though, we have to do an annoying manual split of the
+borrow.
 
-TODO
+```rust
+impl UserInput {
+  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut SystemTime) -> Self {
+    let mut output = UserInput::default();
+    // We have to manually split the borrow here. rustc, why you so dumb sometimes?
+    let events_loop = &mut winit_state.events_loop;
+    let window = &mut winit_state.window;
+    let keys_held = &mut winit_state.keys_held;
+    let grabbed = &mut winit_state.grabbed;
+```
+
+Now we can start the events poll. First up is CloseRequested, which we just mark
+down in our output.
+
+```rust
+    // now we actually poll those events
+    events_loop.poll_events(|event| match event {
+      // Close when asked
+      Event::WindowEvent {
+        event: WindowEvent::CloseRequested,
+        ..
+      } => output.end_requested = true,
+```
+
+Next we need to track what the state of all keys is. This is a little annoying
+at the edge cases, because of [key
+rollover](https://en.wikipedia.org/wiki/Rollover_(key)), and also because if the
+uses presses and holds a key _before the window opens_ we won't get the key
+press event for that. Most of the time though we can fairly reliably get key
+info. Now there's two ways to do this: one is through the
+[WindowEvent](https://docs.rs/winit/0.18.1/winit/enum.WindowEvent.html) type and
+the other is through the
+[DeviceEvent](https://docs.rs/winit/0.18.1/winit/enum.DeviceEvent.html) type. We
+want to use DeviceEvent. The difference is that you only get window events for
+keys when your window is active, but you get device events at all times. If the
+user presses or releases a key when the window is out of focus we want to track
+that. If they press a key and then click in the window, we want to respond to
+that _right away_ without them having to release and press the key again.
+Similarly, if they have a key held and then switch to another window, we want to
+know if it got released while we didn't have focus.
+
+```rust
+      // Track all keys, all the time. Note that because of key rollover details
+      // it's possible to get key released events for keys we don't think are
+      // pressed. This is a hardware limit, not something you can evade.
+      Event::DeviceEvent {
+        event:
+          DeviceEvent::Key(KeyboardInput {
+            virtual_keycode: Some(code),
+            state,
+            ..
+          }),
+        ..
+      } => drop(match state {
+        ElementState::Pressed => keys_held.insert(code),
+        ElementState::Released => keys_held.remove(&code),
+      }),
+```
+
+That would be the end of it, but MacOS is dumb and doesn't provide keys as
+device events. So we need to handle keys as window events too. Also, even on
+non-mac there's a few window event keys that we want to respond do. We're
+keeping "tab swaps the projection", and also we're adding "escape undoes the
+grab".
+
+```rust
+// We want to respond to some of the keys specially when they're also
+      // window events too (meaning that the window was focused when the event
+      // happened).
+      Event::WindowEvent {
+        event:
+          WindowEvent::KeyboardInput {
+            input:
+              KeyboardInput {
+                state,
+                virtual_keycode: Some(code),
+                ..
+              },
+            ..
+          },
+        ..
+      } => {
+        #[cfg(feature = "metal")]
+        {
+          match state {
+            ElementState::Pressed => keys_held.insert(code),
+            ElementState::Released => keys_held.remove(&code),
+          }
+        };
+        if state == ElementState::Pressed {
+          match code {
+            VirtualKeyCode::Tab => output.swap_projection = !output.swap_projection,
+            VirtualKeyCode::Escape => {
+              if *grabbed {
+                debug!("Escape pressed while grabbed, releasing the mouse!");
+                window
+                  .grab_cursor(false)
+                  .expect("Failed to release the mouse grab!");
+                window.hide_cursor(false);
+                *grabbed = false;
+              }
+            }
+            _ => (),
+          }
+        }
+      }
+```
+
+We also want to use `DeviceEvent` to track mouse motion. The difference between
+this and the `CursorMoved` event from before is that `WindowEvent::CursorMoved`
+gives the _position within the window_, while `DeviceEvent::MouseMotion` gives
+the mouse's _position delta_. We're going to "grab" the mouse to lock it within
+the window. When the mouse goes all the way to left and hits x=0 we'd stop
+getting CursorMoved events, but we want to keep turning the view as long as the
+user keeps turning the mouse. By using `MouseMotion` events we can track the
+mouse's intended movement even while the cursor is grabbed.
+
+Also, this is the part where you'd invert the X or Y movement effect if you
+wanted to offer that option to users.
+
+```rust
+      // Always track the mouse motion, but only update the orientation if
+      // we're "grabbed".
+      Event::DeviceEvent {
+        event: DeviceEvent::MouseMotion { delta: (dx, dy) },
+        ..
+      } => {
+        if *grabbed {
+          output.orientation_change.0 -= dx as f32;
+          output.orientation_change.1 -= dy as f32;
+        }
+      }
+```
 
 # Quaternion Free Camera (Slightly Slower, More Freedom)
 
