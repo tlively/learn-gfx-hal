@@ -46,8 +46,7 @@ use gfx_hal::{
 use nalgebra_glm as glm;
 use std::{collections::HashSet, time::SystemTime};
 use winit::{
-  dpi::{LogicalPosition, LogicalSize},
-  CreationError, DeviceEvent, DeviceId, ElementState, Event, EventsLoop, KeyboardInput,
+  dpi::LogicalSize, CreationError, DeviceEvent, ElementState, Event, EventsLoop, KeyboardInput,
   MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
 };
 
@@ -1515,16 +1514,16 @@ impl LocalState {
       self.spare_time -= ONE_SIXTIETH;
     }
     // do camera updates distinctly from physics, based on this frame's time
-    let mut roll = 0.0;
+    let d_pitch = -input.orientation_change.1 * 0.0005;
+    let d_yaw = -input.orientation_change.0 * 0.0005;
+    let mut d_roll = 0.0;
     if input.keys_held.contains(&VirtualKeyCode::Z) {
-      roll -= 5.0 * input.seconds;
+      d_roll -= 2.0 * input.seconds;
     }
     if input.keys_held.contains(&VirtualKeyCode::C) {
-      roll += 5.0 * input.seconds;
+      d_roll += 2.0 * input.seconds;
     }
-    self
-      .camera
-      .update_orientation(input.orientation_change.0, input.orientation_change.1, roll);
+    self.camera.update_orientation(d_pitch, d_yaw, d_roll);
     self
       .camera
       .update_position(&input.keys_held, 5.0 * input.seconds); // 5 meters / second
@@ -1550,6 +1549,11 @@ impl EulerCamera {
     ])
   }
 
+  pub fn update_orientation(&mut self, d_pitch_deg: f32, d_yaw_deg: f32) {
+    self.pitch_deg = (self.pitch_deg + d_pitch_deg).max(-89.0).min(89.0);
+    self.yaw_deg = (self.yaw_deg + d_yaw_deg) % 360.0;
+  }
+
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
     let up = glm::make_vec3(&Self::UP);
     let forward = self.make_front();
@@ -1571,15 +1575,6 @@ impl EulerCamera {
 
       self.position += move_vector * distance;
     }
-  }
-
-  pub fn update_orientation(&mut self, x_delta: f32, y_delta: f32) {
-    // ideally this would be a user setting
-    const MOUSE_SENSITIVITY: f32 = 0.05;
-    let x_offset = x_delta * MOUSE_SENSITIVITY;
-    let y_offset = y_delta * MOUSE_SENSITIVITY;
-    self.pitch_deg = (self.pitch_deg + y_offset).max(-89.0).min(89.0);
-    self.yaw_deg = (self.yaw_deg + x_offset) % 360.0;
   }
 
   pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
@@ -1607,7 +1602,7 @@ pub struct FreeCamera {
 impl FreeCamera {
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
-    self.quat = delta_quat * self.quat;
+    self.quat = self.quat * delta_quat;
   }
 
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
@@ -1634,8 +1629,9 @@ impl FreeCamera {
   }
 
   pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
-    let mat = glm::quat_to_mat4(&self.quat);
-    glm::translate(&mat, &self.position)
+    let rotation = glm::quat_to_mat4(&self.quat);
+    let translation = glm::translation(&self.position);
+    glm::inverse(&(translation * rotation))
   }
 
   pub fn at_position(position: glm::TVec3<f32>) -> Self {
@@ -1683,7 +1679,8 @@ fn main() {
         glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
       ],
       spare_time: 0.0,
-      camera: FreeCamera::at_position(glm::make_vec3(&[-10.0, 0.0, 3.0])),
+      //camera: FreeCamera::at_position(glm::make_vec3(&[-10.0, 0.0, 3.0])),
+      camera: FreeCamera::at_position(glm::make_vec3(&[0.0, 0.0, -5.0])),
       perspective_projection: {
         let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
         temp[(1, 1)] *= -1.0;

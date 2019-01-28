@@ -277,6 +277,23 @@ not really necessary so we'll keep it simple.)
   }
 ```
 
+Orientation updates are pretty simple, but we have to be mindful of our limits.
+We'll cap `pitch` at +/- 89 degrees, and we'll make sure that the `yaw` value
+gets wrapped to being within +/- 360.0 degrees to avoid any potential weird
+accuracy problems (remember that floats are more accurate the closer they are to
+zero).
+
+```rust
+  pub fn update_orientation(&mut self, d_pitch_deg: f32, d_yaw_deg: f32) {
+    self.pitch_deg = (self.pitch_deg + d_pitch_deg).max(-89.0).min(89.0);
+    self.yaw_deg = (self.yaw_deg + d_yaw_deg) % 360.0;
+  }
+```
+
+This is the part where, if you _were_ caching your front vector value, you'd
+update your angles and then rebuild your front vector after each
+`update_orientation` call.
+
 Now we need a way to update the _position_ of the camera. We accept some keys
 and then how far the camera was able to move (if it moved). The distance moved
 is camera_speed * time_elapsed, but whoever calls `update_position` can just
@@ -325,26 +342,6 @@ is flipping `Y` values _after_ they pass through the View matrix. In other
 words, if you port this code to OpenGL where `Y` is up naturally then you'll
 need to flip which one is `+` and which one is `-`, otherwise you'll move
 left/right flipped).
-
-Orientation updates are pretty simple, but we have to be mindful of our limits.
-We'll cap pitch at 89 degrees up or down, and we'll make sure that the `yaw`
-value gets wrapped to being within +/- 360.0 degrees to avoid any potential
-weird accuracy problems (remember that floats are more accurate the closer they
-are to zero).
-
-```rust
-  pub fn update_orientation(&mut self, x_delta: f32, y_delta: f32) {
-    // ideally this would be a user setting
-    const MOUSE_SENSITIVITY: f32 = 0.05;
-    let x_offset = x_delta * MOUSE_SENSITIVITY;
-    let y_offset = y_delta * MOUSE_SENSITIVITY;
-    self.pitch_deg = (self.pitch_deg + y_offset).max(-89.0).min(89.0);
-    self.yaw_deg = (self.yaw_deg + x_offset) % 360.0;
-  }
-```
-
-This is the part where, if you _were_ caching your front vector value, you'd
-update your angles and then rebuild your front vector.
 
 Finally, now that we can adjust the details on our camera, we just need to ask
 it to please give us the correct view matrix.
@@ -438,9 +435,12 @@ just to see how it would be done if you wanted to do it that way.
 
 ```rust
     // do camera updates distinctly from physics, based on this frame's time
+    const MOUSE_SENSITIVITY: f32 = 0.05;
+    let d_pitch_deg = input.orientation_change.1 * MOUSE_SENSITIVITY;
+    let d_yaw_deg = input.orientation_change.0 * MOUSE_SENSITIVITY;
     self
       .camera
-      .update_orientation(input.orientation_change.0, input.orientation_change.1);
+      .update_orientation(d_pitch_deg, d_yaw_deg);
     self
       .camera
       .update_position(&input.keys_held, 5.0 * input.seconds); // 5 meters / second
