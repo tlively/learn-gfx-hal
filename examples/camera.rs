@@ -1543,8 +1543,10 @@ impl LocalState {
   }
 }
 
+/// Acts like a normal "FPS" camera, capped at +/- 89 degrees, no roll.
 #[derive(Debug, Clone, Copy)]
 pub struct EulerCamera {
+  /// Camera position, free free to directly update at any time.
   pub position: glm::TVec3<f32>,
   pitch_deg: f32,
   yaw_deg: f32,
@@ -1562,11 +1564,15 @@ impl EulerCamera {
     ])
   }
 
+  /// Adjusts the camera's orientation (within its limits).
   pub fn update_orientation(&mut self, d_pitch_deg: f32, d_yaw_deg: f32) {
     self.pitch_deg = (self.pitch_deg + d_pitch_deg).max(-89.0).min(89.0);
     self.yaw_deg = (self.yaw_deg + d_yaw_deg) % 360.0;
   }
 
+  /// Updates the position using WASDQE controls.
+  ///
+  /// The "forward" vector is relative to the current orientation.
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
     let up = glm::make_vec3(&Self::UP);
     let forward = self.make_front();
@@ -1585,11 +1591,11 @@ impl EulerCamera {
         });
     if move_vector != glm::zero() {
       move_vector = move_vector.normalize();
-
       self.position += move_vector * distance;
     }
   }
 
+  /// Generates the current view matrix for this camera.
   pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
     glm::look_at_lh(
       &self.position,
@@ -1598,6 +1604,7 @@ impl EulerCamera {
     )
   }
 
+  /// Makes a new camera at the position specified and Pitch/Yaw of `0.0`.
   pub const fn at_position(position: glm::TVec3<f32>) -> Self {
     Self {
       position,
@@ -1607,17 +1614,26 @@ impl EulerCamera {
   }
 }
 
+/// Acts like a space flight camera.
+///
+/// Neat, but the fact that the user can disorient themselves means that it
+/// might be too much power for the common use.
 #[derive(Debug, Clone, Copy)]
 pub struct FreeCamera {
+  /// Camera position, free free to update directly at any time.
   pub position: glm::TVec3<f32>,
   quat: glm::Qua<f32>,
 }
 impl FreeCamera {
+  /// Updates the orientation of the camera.
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
     self.quat = self.quat * delta_quat;
   }
 
+  /// Updates the position of the camera with WASDQE controls.
+  ///
+  /// All motion is relative to the current orientation.
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
     let up = glm::make_vec3(&[0.0, 1.0, 0.0]);
     let forward = glm::make_vec3(&[0.0, 0.0, 1.0]);
@@ -1641,12 +1657,14 @@ impl FreeCamera {
     }
   }
 
+  /// Generates the current view matrix for this camera.
   pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
     let rotation = glm::quat_to_mat4(&self.quat);
     let translation = glm::translation(&self.position);
     glm::inverse(&(translation * rotation))
   }
 
+  /// Makes a new camera at the position specified and an identity orientation.
   pub fn at_position(position: glm::TVec3<f32>) -> Self {
     Self {
       position,
