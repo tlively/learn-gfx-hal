@@ -46,8 +46,9 @@ use gfx_hal::{
 use nalgebra_glm as glm;
 use std::{collections::HashSet, time::SystemTime};
 use winit::{
-  dpi::LogicalSize, CreationError, DeviceEvent, ElementState, Event, EventsLoop, KeyboardInput,
-  VirtualKeyCode, Window, WindowBuilder, WindowEvent,
+  dpi::{LogicalPosition, LogicalSize},
+  CreationError, DeviceEvent, DeviceId, ElementState, Event, EventsLoop, KeyboardInput,
+  MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
 };
 
 pub const WINDOW_NAME: &str = "Camera";
@@ -1273,6 +1274,9 @@ impl core::ops::Drop for HalState {
 pub struct WinitState {
   pub events_loop: EventsLoop,
   pub window: Window,
+  pub keys_held: HashSet<VirtualKeyCode>,
+  pub focused: bool,
+  pub grabbed: bool,
 }
 
 impl WinitState {
@@ -1290,6 +1294,9 @@ impl WinitState {
     output.map(|window| Self {
       events_loop,
       window,
+      focused: false,
+      grabbed: false,
+      keys_held: HashSet::new(),
     })
   }
 }
@@ -1321,19 +1328,56 @@ pub struct UserInput {
 }
 
 impl UserInput {
-  pub fn poll_events_loop(
-    winit_state: &mut WinitState, last_timestamp: &mut SystemTime,
-    keys_held: &mut HashSet<VirtualKeyCode>, focused: &mut bool, grabbed: &mut bool,
-  ) -> Self {
+  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut SystemTime) -> Self {
     let mut output = UserInput::default();
-    // We have to manually split the borrow here. rustc why you so dumb sometimes?
-    let win_ref = &winit_state.window;
-    let events_mut = &mut winit_state.events_loop;
-    events_mut.poll_events(|event| match event {
+    // We have to manually split the borrow here. rustc, why you so dumb sometimes?
+    let events_loop = &mut winit_state.events_loop;
+    let window = &mut winit_state.window;
+    let keys_held = &mut winit_state.keys_held;
+    let focused = &mut winit_state.focused;
+    let grabbed = &mut winit_state.grabbed;
+    // now we actually poll those events
+    events_loop.poll_events(|event| match event {
+      // Close when asked
       Event::WindowEvent {
         event: WindowEvent::CloseRequested,
         ..
       } => output.end_requested = true,
+
+      // Track all keys, all the time. Note that because of key rollover details
+      // it's possible to get key released events for keys we don't think are
+      // pressed. This is a hardware limit, not something you can evade.
+      Event::DeviceEvent {
+        event:
+          DeviceEvent::Key(KeyboardInput {
+            virtual_keycode: Some(code),
+            state,
+            ..
+          }),
+        ..
+      } => drop(match state {
+        ElementState::Pressed => keys_held.insert(code),
+        ElementState::Released => keys_held.remove(&code),
+      }),
+
+      // Always track the mouse axis, but only update the orientation if
+      // grabbed.
+      Event::DeviceEvent {
+        event: DeviceEvent::Motion { axis, value },
+        ..
+      } => {
+        if *grabbed {
+          match axis {
+            0 => output.orientation_change.0 -= value as f32,
+            1 => output.orientation_change.1 -= value as f32,
+            _ => {
+              info!("Unknown Motion Axis ID: {}", axis);
+            }
+          }
+        }
+      }
+
+      // Track focus, automatically release the mouse when focus lost
       Event::WindowEvent {
         event: WindowEvent::Focused(true),
         ..
@@ -1345,83 +1389,77 @@ impl UserInput {
         event: WindowEvent::Focused(false),
         ..
       } => {
-        debug!("Lost focus, releasing the mouse grab...");
-        win_ref
-          .grab_cursor(false)
-          .expect("Failed to release the mouse grab!");
-        win_ref.hide_cursor(false);
         *focused = false;
-        *grabbed = false;
+        if *grabbed {
+          debug!("Lost Focus, releasing the mouse grab...");
+          window
+            .grab_cursor(false)
+            .expect("Failed to release the mouse grab!");
+          window.hide_cursor(false);
+          *grabbed = false;
+        } else {
+          debug!("Lost Focus when mouse wasn't grabbed.");
+        }
       }
+
+      // Left clicking in the window causes the mouse to get grabbed
       Event::WindowEvent {
-        event: WindowEvent::CursorEntered { .. },
+        event:
+          WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+            ..
+          },
         ..
       } => {
-        if *focused {
-          debug!("CursorEntered while Focused, grabbing...");
-          win_ref
-            .grab_cursor(true)
-            .expect("Failed to release the mouse grab!");
-          win_ref.hide_cursor(true);
+        if *grabbed {
+          debug!("Click! We already have the mouse grabbed.");
+        } else {
+          debug!("Click! Grabbing the mouse.");
+          window.grab_cursor(true).expect("Failed to grab the mouse!");
+          window.hide_cursor(true);
           *grabbed = true;
         }
       }
-      Event::DeviceEvent {
-        event: dev_event, ..
-      } => match dev_event {
-        DeviceEvent::Motion { axis, value } => {
-          if *grabbed {
-            match axis {
-              0 => output.orientation_change.0 -= value as f32,
-              1 => output.orientation_change.1 -= value as f32,
-              _ => {
-                info!("Unknown Motion Axis ID: {}", axis);
-              }
-            }
-          }
-        }
-        _ => {}
-      },
+
+      // Update our size info if the window changes size.
       Event::WindowEvent {
         event: WindowEvent::Resized(logical),
         ..
       } => {
         output.new_frame_size = Some((logical.width, logical.height));
       }
+
+      // We want to respond to some of the keys specially when they're also
+      // window events too (meaning that the window was focused when the event
+      // happened).
       Event::WindowEvent {
         event:
           WindowEvent::KeyboardInput {
             input:
               KeyboardInput {
                 state: ElementState::Pressed,
-                virtual_keycode: Some(VirtualKeyCode::Tab),
-                ..
-              },
-            ..
-          },
-        ..
-      } => {
-        // Each time we see TAB we flip if a projection swap has been requested.
-        // This will probably only happen once per frame anyway.
-        output.swap_projection = !output.swap_projection;
-        keys_held.insert(VirtualKeyCode::Tab);
-      }
-      Event::WindowEvent {
-        event:
-          WindowEvent::KeyboardInput {
-            input:
-              KeyboardInput {
                 virtual_keycode: Some(code),
-                state,
                 ..
               },
             ..
           },
         ..
-      } => drop(match state {
-        ElementState::Pressed => keys_held.insert(code),
-        ElementState::Released => keys_held.remove(&code),
-      }),
+      } => match code {
+        VirtualKeyCode::Tab => output.swap_projection = !output.swap_projection,
+        VirtualKeyCode::Escape => {
+          if *grabbed {
+            debug!("Escape pressed while grabbed, releasing the mouse!");
+            window
+              .grab_cursor(false)
+              .expect("Failed to release the mouse grab!");
+            window.hide_cursor(false);
+            *grabbed = false;
+          }
+        }
+        _ => (),
+      },
+
       _ => (),
     });
     output.seconds = {
@@ -1436,7 +1474,11 @@ impl UserInput {
         }
       }
     };
-    output.keys_held = keys_held.clone();
+    output.keys_held = if *grabbed {
+      keys_held.clone()
+    } else {
+      HashSet::new()
+    };
     output
   }
 }
@@ -1606,18 +1648,9 @@ fn main() {
     }
   };
   let mut last_timestamp = SystemTime::now();
-  let mut keys_held = HashSet::<VirtualKeyCode>::new();
-  let mut focused = true;
-  let mut grabbed = true;
 
   loop {
-    let inputs = UserInput::poll_events_loop(
-      &mut winit_state,
-      &mut last_timestamp,
-      &mut keys_held,
-      &mut focused,
-      &mut grabbed,
-    );
+    let inputs = UserInput::poll_events_loop(&mut winit_state, &mut last_timestamp);
     if inputs.end_requested {
       break;
     }

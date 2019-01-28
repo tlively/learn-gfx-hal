@@ -474,10 +474,33 @@ polling method has a few more arguments.
 ```
 
 Actually, all that stuff has to do with `winit` really, so it should be in the
-`WinitState`, don't you think?
+`WinitState`, don't you think? We're already taking a `&mut WinitState`.
+
+```rust
+#[derive(Debug)]
+pub struct WinitState {
+  pub events_loop: EventsLoop,
+  pub window: Window,
+  pub focused: bool,
+  pub cursor_entered: bool,
+  pub grabbed: bool,
+  pub keys_held: HashSet<VirtualKeyCode>,
+}
+```
+
+So what we're trying to express here is that we're tracking the mouse moving
+around, and there's an increasing level of mouse interaction with the program.
 
 TODO
 
 # Quaternion Free Camera (Slightly Slower, More Freedom)
+
+Now we're gonna use
+[Quaternions](https://www.3dgep.com/understanding-quaternions/). They're not
+super covered in the Khan Academy "Vector and Matrix" math course that I linked
+before, at least not from what I saw in their lesson listing. Use that link
+there to read all about Quaternions if you want the juicy math details, because
+they're sure _weird_. They're 4D! Isn't that already pretty weird all on its
+own?
 
 TODO
