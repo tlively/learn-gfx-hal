@@ -270,9 +270,9 @@ not really necessary so we'll keep it simple.)
     let pitch_rad = f32::to_radians(self.pitch_deg);
     let yaw_rad = f32::to_radians(self.yaw_deg);
     glm::make_vec3(&[
-      yaw_rad.cos() * pitch_rad.cos(),
-      pitch_rad.sin(),
       yaw_rad.sin() * pitch_rad.cos(),
+      pitch_rad.sin(),
+      yaw_rad.cos() * pitch_rad.cos(),
     ])
   }
 ```
@@ -437,13 +437,11 @@ just to see how it would be done if you wanted to do it that way.
     // do camera updates distinctly from physics, based on this frame's time
     const MOUSE_SENSITIVITY: f32 = 0.05;
     let d_pitch_deg = input.orientation_change.1 * MOUSE_SENSITIVITY;
-    let d_yaw_deg = input.orientation_change.0 * MOUSE_SENSITIVITY;
+    let d_yaw_deg = -input.orientation_change.0 * MOUSE_SENSITIVITY;
+    self.camera.update_orientation(d_pitch_deg, d_yaw_deg);
     self
       .camera
-      .update_orientation(d_pitch_deg, d_yaw_deg);
-    self
-      .camera
-      .update_position(&input.keys_held, 5.0 * input.seconds); // 5 meters / second
+      .update_position(&input.keys_held, 5.0 * input.seconds);
 ```
 
 ## Update `UserInput`
@@ -713,4 +711,131 @@ here](https://www.3dgep.com/understanding-quaternions/) to learn all about
 them.They're sure _weird_. They're 4D! Isn't that already pretty weird all on
 its own?
 
-TODO
+The math here is actually so complicated that I honestly don't know how most of
+it works. However, [termhn](https://github.com/termhn) managed to ~~help me~~
+_do most of the work_ and we got a quaternion free camera going with only mild
+struggles. Cargo cult programming at its finest.
+
+So we start with our FreeCamera struct, once again we have a public position
+field and an internal way to track our orientation. In this case it's a
+quaternion now.
+
+```rust
+#[derive(Debug, Clone, Copy)]
+pub struct FreeCamera {
+  pub position: glm::TVec3<f32>,
+  quat: glm::Qua<f32>,
+}
+```
+
+And then we add a way to update our orientation. This is like before, but now
+we're allowed to pass a `d_roll` value as well. We take the three deltas and
+make a delta quaternion. Then we multiply our current quaternion by this to
+"update" our orientation by the amounts requested. Remember that quaternion
+multiplications are NOT commutative (like matrix multiplications), so the order
+here is important.
+
+```rust
+impl FreeCamera {
+  pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
+    let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
+    self.quat = self.quat * delta_quat;
+  }
+```
+
+To update the position we do all the basic thing as the EulerCamera did. We sum
+up all the directions we're trying to go, check that it's non-zero, if so we
+normalize it. Then there's a change: we can't just adjust the magnitude and then
+add. First we have to rotate the unit vector through our quaternion to give it
+the correct orientation. Once it's rotated correct we multiply and add like
+before.
+
+```rust
+  pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
+    let up = glm::make_vec3(&[0.0, 1.0, 0.0]);
+    let forward = glm::make_vec3(&[0.0, 0.0, 1.0]);
+    let cross_normalized = glm::cross::<f32, glm::U3>(&forward, &up).normalize();
+    let mut move_vector =
+      keys
+        .iter()
+        .fold(glm::make_vec3(&[0.0, 0.0, 0.0]), |vec, key| match *key {
+          VirtualKeyCode::W => vec + forward,
+          VirtualKeyCode::S => vec - forward,
+          VirtualKeyCode::A => vec + cross_normalized,
+          VirtualKeyCode::D => vec - cross_normalized,
+          VirtualKeyCode::E => vec + up,
+          VirtualKeyCode::Q => vec - up,
+          _ => vec,
+        });
+    if move_vector != glm::zero() {
+      move_vector = move_vector.normalize();
+      let rotated_move_vector = glm::quat_rotate_vec3(&self.quat, &move_vector);
+      self.position += rotated_move_vector * distance;
+    }
+  }
+```
+
+To make a view matrix from this we have to expand our quaternion into a rotation
+matrix, expand out position into a translation matrix, and then invert
+`translation * rotation`. We invert the matrix because what the camera is
+actually storing is _its own model matrix_. However, we're not trying to put the
+camera in the world, we're trying to send the whole world backwards through the
+camera. Uh, if that makes sense?
+
+```rust
+  pub fn make_view_matrix(&self) -> glm::TMat4<f32> {
+    let rotation = glm::quat_to_mat4(&self.quat);
+    let translation = glm::translation(&self.position);
+    glm::inverse(&(translation * rotation))
+  }
+```
+
+And of course want a way to make a FreeCamera from just a position:
+
+```rust
+  pub fn at_position(position: glm::TVec3<f32>) -> Self {
+    Self {
+      position,
+      quat: glm::quat_identity(),
+    }
+  }
+```
+
+Now we can finally move through box space in any way that we want!
+
+Almost!
+
+We have to update `LocalState` to have the new camera type, and we also have to
+update how it computes the orientation deltas. Specifically, we have to turn the
+pitch and yaw changes _way_ down. They're no longer in degrees, they're in...
+uh... well not even Radians I guess. Just... arbitrary units? Anyway, turn the
+mouse sensitivity way down.
+
+Also, we will use `Z` and `C` to roll port and starboard.
+
+```rust
+    const MOUSE_SENSITIVITY: f32 = 0.0005;
+    let d_pitch = -input.orientation_change.1 * MOUSE_SENSITIVITY;
+    let d_yaw = -input.orientation_change.0 * MOUSE_SENSITIVITY;
+    let mut d_roll = 0.0;
+    if input.keys_held.contains(&VirtualKeyCode::Z) {
+      d_roll -= 2.0 * input.seconds;
+    }
+    if input.keys_held.contains(&VirtualKeyCode::C) {
+      d_roll += 2.0 * input.seconds;
+    }
+    self.camera.update_orientation(d_pitch, d_yaw, d_roll);
+    self
+      .camera
+      .update_position(&input.keys_held, 5.0 * input.seconds);
+```
+
+![camera-complete](images/camera-complete.png)
+
+Well, the boxes _still_ draw over each other weird. Next lesson is finally putting
+in that Depth Buffer stuff so that we can make them knock it off and act like
+proper visuals.
+
+As always, the code for this lesson is in the
+[examples/](https://github.com/Lokathor/learn-gfx-hal/tree/master/examples)
+directory.

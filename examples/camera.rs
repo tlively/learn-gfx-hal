@@ -1514,8 +1514,20 @@ impl LocalState {
       self.spare_time -= ONE_SIXTIETH;
     }
     // do camera updates distinctly from physics, based on this frame's time
-    let d_pitch = -input.orientation_change.1 * 0.0005;
-    let d_yaw = -input.orientation_change.0 * 0.0005;
+    /* EULER CAMERA
+    const MOUSE_SENSITIVITY: f32 = 0.05;
+    let d_pitch_deg = input.orientation_change.1 * MOUSE_SENSITIVITY;
+    let d_yaw_deg = -input.orientation_change.0 * MOUSE_SENSITIVITY;
+    self.camera.update_orientation(d_pitch_deg, d_yaw_deg);
+    self
+      .camera
+      .update_position(&input.keys_held, 5.0 * input.seconds);
+    // */
+
+    // /* FREE CAMERA
+    const MOUSE_SENSITIVITY: f32 = 0.0005;
+    let d_pitch = -input.orientation_change.1 * MOUSE_SENSITIVITY;
+    let d_yaw = -input.orientation_change.0 * MOUSE_SENSITIVITY;
     let mut d_roll = 0.0;
     if input.keys_held.contains(&VirtualKeyCode::Z) {
       d_roll -= 2.0 * input.seconds;
@@ -1526,7 +1538,8 @@ impl LocalState {
     self.camera.update_orientation(d_pitch, d_yaw, d_roll);
     self
       .camera
-      .update_position(&input.keys_held, 5.0 * input.seconds); // 5 meters / second
+      .update_position(&input.keys_held, 5.0 * input.seconds);
+    // */
   }
 }
 
@@ -1543,9 +1556,9 @@ impl EulerCamera {
     let pitch_rad = f32::to_radians(self.pitch_deg);
     let yaw_rad = f32::to_radians(self.yaw_deg);
     glm::make_vec3(&[
-      yaw_rad.cos() * pitch_rad.cos(),
-      pitch_rad.sin(),
       yaw_rad.sin() * pitch_rad.cos(),
+      pitch_rad.sin(),
+      yaw_rad.cos() * pitch_rad.cos(),
     ])
   }
 
@@ -1596,7 +1609,7 @@ impl EulerCamera {
 
 #[derive(Debug, Clone, Copy)]
 pub struct FreeCamera {
-  position: glm::TVec3<f32>,
+  pub position: glm::TVec3<f32>,
   quat: glm::Qua<f32>,
 }
 impl FreeCamera {
@@ -1679,7 +1692,6 @@ fn main() {
         glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
       ],
       spare_time: 0.0,
-      //camera: FreeCamera::at_position(glm::make_vec3(&[-10.0, 0.0, 3.0])),
       camera: FreeCamera::at_position(glm::make_vec3(&[0.0, 0.0, -5.0])),
       perspective_projection: {
         let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);

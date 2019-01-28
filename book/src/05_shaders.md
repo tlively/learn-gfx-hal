@@ -345,7 +345,12 @@ And just after we bind the vertex buffer, we also push the graphics constant:
 
 ```rust
         encoder.bind_vertex_buffers(0, buffers);
-        encoder.push_graphics_constants(&self.pipeline_layout, ShaderStageFlags::FRAGMENT, 0, &[time_f32.to_bits()]);
+        encoder.push_graphics_constants(
+          &self.pipeline_layout,
+          ShaderStageFlags::FRAGMENT,
+          0,
+          &[time_f32.to_bits()],
+        );
 ```
 
 The important part is that we have to remember to adjust our pipeline definition
