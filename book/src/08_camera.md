@@ -803,7 +803,8 @@ w = cos(RotationAngle / 2)
 ```
 
 And we don't have an axis or an angle, we just have some random values someone
-gave us. Soooo.... we pick `w=1.0`. Why? because
+gave us. We can't really hope to form a unit quaternion at all, we'll just have
+to make a non-unit quaternion. Soooo.... we pick `w=1.0`. Why? because
 [Groves](https://github.com/grovesNL) suggested it. I'm not joking, that's the
 real reason. The crazy part is that it works. Actually any non-zero `w` value
 works, and higher `w` values _decrease_ how much effect the other delta values

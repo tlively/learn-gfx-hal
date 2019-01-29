@@ -1634,9 +1634,9 @@ impl QuaternionFreeCamera {
   /// frame of movement in any particular delta. Honestly, more research is
   /// probably needed in this area.
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
-    // If you change the `1.0` here it changes the scale that the delta values
-    // are in. The scale is _probably_ `1-w*w`. If you set this to 0.0 you'll
-    // get nothing drawn.
+    // This gives a non-unit quaternion! If you change the `1.0` here it changes
+    // the scale that the delta values are in. The scale is _probably_ `1-w*w`.
+    // If you set this to 0.0 you'll get nothing drawn.
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
     self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
