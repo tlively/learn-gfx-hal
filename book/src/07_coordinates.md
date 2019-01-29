@@ -73,6 +73,10 @@ here, so that's exactly what I'll do.
   Algebra](https://www.khanacademy.org/math/linear-algebra) course, it's a totally
   free video series style
 
+* If you like videos, the [Essence of Linear
+  Algebra](https://www.youtube.com/watch?v=fNk_zzaMoSs&list=PLZHQObOWTQDPD3MizzM2xVFitgF8hE_ab)
+  by 3blue1brown is pretty amazing.
+
 ## Applying The Math
 
 So now that we know about how vectors and matrices work, how do we do this in
