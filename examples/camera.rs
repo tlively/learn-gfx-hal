@@ -1482,7 +1482,7 @@ pub struct LocalState {
   pub frame_width: f64,
   pub frame_height: f64,
   pub cubes: Vec<glm::TMat4<f32>>,
-  pub camera: FreeCamera,
+  pub camera: QuaternionFreeCamera,
   pub perspective_projection: glm::TMat4<f32>,
   pub orthographic_projection: glm::TMat4<f32>,
   pub is_orthographic: bool,
@@ -1545,13 +1545,13 @@ impl LocalState {
 
 /// Acts like a normal "FPS" camera, capped at +/- 89 degrees, no roll.
 #[derive(Debug, Clone, Copy)]
-pub struct EulerCamera {
+pub struct EulerFPSCamera {
   /// Camera position, free free to directly update at any time.
   pub position: glm::TVec3<f32>,
   pitch_deg: f32,
   yaw_deg: f32,
 }
-impl EulerCamera {
+impl EulerFPSCamera {
   const UP: [f32; 3] = [0.0, 1.0, 0.0];
 
   fn make_front(&self) -> glm::TVec3<f32> {
@@ -1619,12 +1619,12 @@ impl EulerCamera {
 /// Neat, but the fact that the user can disorient themselves means that it
 /// might be too much power for the common use.
 #[derive(Debug, Clone, Copy)]
-pub struct FreeCamera {
+pub struct QuaternionFreeCamera {
   /// Camera position, free free to update directly at any time.
   pub position: glm::TVec3<f32>,
   quat: glm::Qua<f32>,
 }
-impl FreeCamera {
+impl QuaternionFreeCamera {
   /// Updates the orientation of the camera.
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
@@ -1710,7 +1710,7 @@ fn main() {
         glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
       ],
       spare_time: 0.0,
-      camera: FreeCamera::at_position(glm::make_vec3(&[0.0, 0.0, -5.0])),
+      camera: QuaternionFreeCamera::at_position(glm::make_vec3(&[0.0, 0.0, -5.0])),
       perspective_projection: {
         let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
         temp[(1, 1)] *= -1.0;

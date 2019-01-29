@@ -3,14 +3,29 @@
 Now that we've got everything in the right coordinate system, let's play around
 a little bit with that.
 
-As a review:
+Quick Review:
 
-* The Model Matrix places the model into the world
-* The View Matrix defines _where the camera is_
-* The Projection Matrix defines _the lens of the camera_
+A **Transformation** converts a point within one coordinate system into a new
+point in either the same coordinate system or a new coordinate system. When you
+apply the same transformation to a group of points, you can **Translate**
+(position change), **Rotate** (orientation change), or **Scale** (size change)
+that whole group.
 
-So this lesson we'll play around with the View matrix and the Projection matrix
-a tiny bit.
+* The Model Matrix transforms model space points into world space points. It
+  "places" the model within the world. A "model" can be any collection of
+  points, from a single point or a single line segment all the way up to _Geralt
+  of Rivea_ (clocking in at around 30,000 triangles in his Witcher 2 model,
+  according to a quick google).
+* The View Matrix transforms world space into view space. Instead of placing the
+  camera in the world, it's actually the opposite sort of effect. It re-places
+  everything within the whole world into the camera's vision of things, with the
+  camera at the view space origin.
+* The Projection Matrix transforms view space into Normalized Device
+  Coordinates. This acts like the "lens" of the camera, and it's where things
+  like field of view angle come into play.
+
+So in this lesson we'll first show an Orthographic Projection matrix, and then
+we'll focus on two different camera types
 
 ## Quick Patch
 
@@ -31,13 +46,21 @@ in debug builds, we want to only activate this attribute in builds _without_
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 ```
 
+(Note: if you have `windows_subsystem = "windows"` set on a program and run it
+from the command line of a terminal _other than_ `cmd.exe` and PowerShell (eg:
+GitBash) you might still get terminal output. But you have to ask yourself, who
+would be so heretical?
+
 # Orthographic Projection
 
 I mentioned it in passing before, but there's a second major category of
-projection that you might sometimes use. We're currently using Perspective,
-which makes things look "real". There's also Orthographic, which makes things
-look more "tactical" looking. Like how SimCity, or Civilization, or whatever
-your favorite example is.
+projection that you might sometimes use. We're currently using
+[Perspective](https://en.wikipedia.org/wiki/3D_projection#Perspective_projection),
+which makes things look "real" because parallel lines will converge as they move
+away from you. There's also
+[Orthographic](https://en.wikipedia.org/wiki/3D_projection#Orthographic_projection),
+which makes things look more "tactical" because parallel lines _don't_ meet up
+in the distance. Like SimCity or Civilization.
 
 Since our scene is a bunch of cubes floating around in space, the orthographic
 projection is going to look kinda weird, but we'll slot it in there as an
@@ -197,17 +220,16 @@ that you know what to do. Right now I just wanted you to know that it's
 _possible_, and let you have a sense of why the `view` and `projection` matrix
 data isn't always just a single matrix based on the camera position.
 
-# Euler Angle Camera
+# Euler Angle FPS Camera
 
 Ultimately a camera is just about picking a **location** and **orientation** of
-where you're looking at things from. However, there's actually two major types
-of camera similar to how there's two major types of projection.
+where you're looking at things from. However, there's actually a few major types
+of camera similar to how there's a few major types of projection.
 
 First we'll go over a camera that uses "[Euler
-Angles](https://en.wikipedia.org/wiki/Euler_angles)", because it's a little
-easier to think about. Euler angles means `pitch`, `roll`, and `yaw`. Like a
-plane. This is often called an "FPS Camera" because it works like in a first
-person game.
+Angles](https://en.wikipedia.org/wiki/Euler_angles)" to act like a First Person
+Shooter (FPS) camera. It's probably the easiest style of camera to think about.
+Euler angles means `pitch`, `roll`, and `yaw`. Like a plane.
 
 * `pitch`: angle up and down
 * `roll`: angle rocking side to side
@@ -222,12 +244,14 @@ accidentally giving themselves problems.
 Also, we'll limit the maximum `pitch` value to +/- 89 degrees. You remember that
 `up` vector thing from the `look_at` projection? If the `pitch` is allowed to
 hit 90 degrees then the `up` vector and the `front` vector line up and that's a
-problem too. Again, this users are actually very used to the idea that they
-can't just look up more and more until it's flipped over.
+problem too. Technically you _could_ get around this pitch limitation, but
+letting the user get flipped over backwards is probably good enough reason to
+keep it in. Most users are actually very comfortable with the idea that they
+can't just look up more and more until their perspective has flipped over
+entirely, so it's still "professional quality" to have this limit in place.
 
-Can we avoid those limits? Yes, that's what the second camera style is for.
-However, we'll do the simple one first because most of the time it's all you
-need and it's easier to understand.
+If you _do_ want to enable total freedom of movement that'll be available in
+the next camera we go over.
 
 ## EulerCamera Struct
 
@@ -235,35 +259,37 @@ So we need a _location_ and _orientation_. Our struct can hold exactly that:
 
 ```rust
 #[derive(Debug, Clone, Copy)]
-pub struct EulerCamera {
+pub struct EulerFPSCamera {
   pub position: glm::TVec3<f32>,
   pitch_deg: f32,
   yaw_deg: f32,
 }
 ```
 
-We've got a little extra note there that the pitch and yaw will be in degrees,
-because degrees are usually easier for a human to think about, but the `sin` and
-`cos` functions are for `radians`, so when we eventually call those we'll need a
-conversion first.
+We've got a little extra note there in the names that the pitch and yaw will be
+in degrees, because degrees are usually easier for a human to think about, but
+the `sin` and `cos` functions are for `radians`, so when we eventually call
+those we'll need a conversion first.
 
-Now we declare the "up" vector, which is always the same for this camera style.
-Unfortunately, I'm not seeing a `const` function for making a TVec3 value, so
-we'll declare the array for the data and then wrap it when we need to I guess.
+Now we declare the "up" vector, which is always the same for this particular
+camera. We need it for moving the camera and also for creating the `look_at`
+view matrix. Unfortunately, I'm not seeing a `const` function for making a TVec3
+value, so we'll declare the array as a const and then just convert it into a
+TVec3 when we need to.
 
 ```rust
 impl EulerCamera {
   const UP: [f32; 3] = [0.0, 1.0, 0.0];
 ```
 
-Next we want a "front" vector. This is a vector that points forward out of the
-camera into the world. We're actually tracking our pitch and yaw as angles, but
-we'll need the front vector for doing movement and computing the `look_at`
-matrix. This involves some `sin` and `cos` calls, so we have to convert our
-degree values into radian values.
-
-(If we wanted we could cache this vector along side our angle values, but that's
-not really necessary so we'll keep it simple.)
+Next we want a "front" or "forward" vector. This is a vector that points forward
+out of the camera into the world. We're actually tracking our pitch and yaw as
+angles, but we'll need the front vector for doing movement and computing the
+`look_at` matrix. This involves some `sin` and `cos` calls, so we have to
+convert our degree values into radian values. If we wanted we could cache this
+vector along side our angle values, but that's not really necessary (you
+probably only touch your camera once per frame) so we'll keep it simple and just
+build the vector from scratch each time.
 
 ```rust
   fn make_front(&self) -> glm::TVec3<f32> {
@@ -277,11 +303,11 @@ not really necessary so we'll keep it simple.)
   }
 ```
 
-Orientation updates are pretty simple, but we have to be mindful of our limits.
-We'll cap `pitch` at +/- 89 degrees, and we'll make sure that the `yaw` value
-gets wrapped to being within +/- 360.0 degrees to avoid any potential weird
-accuracy problems (remember that floats are more accurate the closer they are to
-zero).
+Orientation updates are pretty simple, but we have to be mindful of the limits
+we talked about. We'll cap `pitch` at +/- 89 degrees, and we'll make sure that
+the `yaw` value gets wrapped to being within +/- 360.0 degrees. Remember that
+floats are more accurate the closer they are to zero, and we don't want any
+weird accuracy problems creeping up on us.
 
 ```rust
   pub fn update_orientation(&mut self, d_pitch_deg: f32, d_yaw_deg: f32) {
@@ -290,18 +316,29 @@ zero).
   }
 ```
 
-This is the part where, if you _were_ caching your front vector value, you'd
-update your angles and then rebuild your front vector after each
-`update_orientation` call.
+Now we need a way to update the _position_ of the camera. First of all, you can
+just assign the camera any new position at any time and it'll work right. However, we also want to support going "forward" and "sideways" relative to the current perspective (like you do in a first person game), so we'll want a method for that.
 
-Now we need a way to update the _position_ of the camera. We accept some keys
-and then how far the camera was able to move (if it moved). The distance moved
-is camera_speed * time_elapsed, but whoever calls `update_position` can just
+We take in which keys are being held down and then how far the camera should
+move in whatever direction the keys determine. The distance moved is
+camera_speed * time_elapsed, but whoever calls `update_position` can just
 compute that on their side before they call us.
 
-The way that this works is that we gather up all the deltas that the keys are
-trying to get us to do, normalize that total if it's non-zero, and then adjust
-our position by that normalized vector times the distance.
+The way that this works is that we first gather up all the deltas that the keys
+are trying to get us to do. If that total is zero we didn't move so we're done.
+If it's non-zero we first have to normalize the direction vector. If we didn't
+normalize our direction vector then moving forward _or_ sideways would be "1"
+unit of distance but moving forward _and_ sideways would end up being "1.4"
+(technically `sqrt(2)`) units of distance ([Pythagorean
+theorem](https://en.wikipedia.org/wiki/Pythagorean_theorem), yo). It's pretty
+silly for diagonal movement to be faster than direct movement, and even
+professional games such as
+[Morrowind](https://en.wikipedia.org/wiki/The_Elder_Scrolls_III:_Morrowind) and
+[Obduction](https://en.wikipedia.org/wiki/Obduction_(video_game)) make this easy
+mistake.
+
+Once we have our normalized direction vector, we scale the vector by our
+distance value and add it to our position.
 
 ```rust
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
@@ -704,54 +741,104 @@ And everything works!
 Except we can't roll yet.
 
 # Quaternion Free Camera (Slightly Slower, More Freedom)
+_"what's going on? oh god quaternions, no effin' clue" -Xavil_
 
-Now we're gonna use Quaternions. They're not super covered in the Khan Academy
-"Vector and Matrix" math course that I linked last lesson, at least not from
-what I saw in their table of contents listing. Instead, try [this link
-here](https://www.3dgep.com/understanding-quaternions/) to learn all about
-them.They're sure _weird_. They're 4D! Isn't that already pretty weird all on
-its own?
+Now we're gonna use [Quaternions](https://en.wikipedia.org/wiki/Quaternion).
+They're not super covered in the Khan Academy "Vector and Matrix" math course
+that I linked last lesson, at least not from what I saw in their table of
+contents listing. Instead, try [this link
+here](https://www.3dgep.com/understanding-quaternions/) to learn about them, or
+perhaps
+[here](http://www.opengl-tutorial.org/intermediate-tutorials/tutorial-17-quaternions/)
+if you want a short version that's mostly computer graphics oriented. You could
+also try [these videos](https://eater.net/quaternions/) if you're better at
+learning through video. Quaternion are sure _weird_. They're 4D! Isn't that
+already pretty weird all on its own?
+
+With the power of quaternions at our finger tips we're going to make a "free
+camera", which means that we can pitch, yaw, _and also roll_ as much as we want.
+There's still a _mild_ limit that if there's a large change in more than one
+axis in a single `update_orientation` call then you could trigger a gimbal lock,
+but for normal use that's not a danger, and if you really need to do big
+orientation changes you can break it into a series of smaller changes.
 
 The math here is actually so complicated that I honestly don't know how most of
 it works. However, [termhn](https://github.com/termhn) managed to ~~help me~~
 _do most of the work_ and we got a quaternion free camera going with only mild
 struggles. Cargo cult programming at its finest.
 
-So we start with our FreeCamera struct, once again we have a public position
-field and an internal way to track our orientation. In this case it's a
+So we start with our QuaternionFreeCamera struct, once again we have a public
+position field and an internal way to track our orientation. In this case it's a
 quaternion now.
 
 ```rust
 #[derive(Debug, Clone, Copy)]
-pub struct FreeCamera {
+pub struct QuaternionFreeCamera {
   pub position: glm::TVec3<f32>,
   quat: glm::Qua<f32>,
 }
 ```
 
-And then we add a way to update our orientation. This is like before, but now
-we're allowed to pass a `d_roll` value as well. We take the three deltas and
-make a delta quaternion. Then we multiply our current quaternion by this to
-"update" our orientation by the amounts requested. Remember that quaternion
-multiplications are NOT commutative (like matrix multiplications), so the order
-here is important. Also, we need to throw in a `quat_normalize` or the
-orientation becomes messed up after too many updates (as too much floating point
-error accumulates).
+Now we want to update the orientation. Instead of giving pitch and yaw changes
+in degrees we give pitch, yaw, _and roll_ changes in... uh, non-unit values?
+There aren't really units here. This is honestly the most baffling part of it,
+because what I'm about to show you works, but no one that I've asked has been
+able to explain _why_ it works. The math involved came partly from [this
+article](http://in2gpu.com/2016/03/14/opengl-fps-camera-quaternion/) but even
+they don't explain exactly why the formula works out.
+
+So we take our inputs that are in really small values, like `0.0005` levels of
+small, and then we just make a quaternion _directly_ from that with
+[nalgebra_glm::quat](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.quat.html).
+It expects four values, and we have three values, so what should the fourth
+value be? I don't know. `x`, `y`, `z`, and `w` are defined like this:
+
+```
+// RotationAngle is in radians
+x = RotationAxis.x * sin(RotationAngle / 2)
+y = RotationAxis.y * sin(RotationAngle / 2)
+z = RotationAxis.z * sin(RotationAngle / 2)
+w = cos(RotationAngle / 2)
+```
+
+And we don't have an axis or an angle, we just have some random values someone
+gave us. Soooo.... we pick `w=1.0`. Why? because
+[Groves](https://github.com/grovesNL) suggested it. I'm not joking, that's the
+real reason. The crazy part is that it works. Actually any non-zero `w` value
+works, and higher `w` values _decrease_ how much effect the other delta values
+have. `w=1.0` seems to be fine enough, so we'll stick with it. We're deep into
+the realm of magic and cargo cult programming anyway.
+
+Once we have this `delta_quat`, which purports to describe the change from the
+current orientation to the next orientation, we have to
+[multiply](https://en.wikipedia.org/wiki/Quaternion#Multiplication_of_basis_elements)
+the current quaternion and the delta quaternion. Like with matrix
+multiplication, this is _not_ commutative, so we have to write `self.quat *
+delta_quat`. We're not yet done, because we also have to normalize the
+multiplication output. Without the normalization our orientation quaternion
+would eventually get messed up by accumulated floating point errors. Floating
+point is the worst, except for all the other even worse options.
 
 ```rust
-impl FreeCamera {
+impl QuaternionFreeCamera {
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
     self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
 ```
 
-To update the position we do all the basic thing as the EulerCamera did. We sum
-up all the directions we're trying to go, check that it's non-zero, if so we
-normalize it. Then there's a change: we can't just adjust the magnitude and then
-add. First we have to rotate the unit vector through our quaternion to give it
-the correct orientation. Once it's rotated correct we multiply and add like
-before.
+To update the position we do mostly the same things as the EulerFPSCamera did.
+
+We sum up all the directions we're trying to go, check that it's non-zero, if so
+we normalize it. Then there's a change: we can't yet adjust the magnitude and
+then add. First we have to rotate our normalized vector vector with our
+quaternion to give it the correct orientation relative to our own orientation.
+Once it's rotated we multiply and add like before.
+
+In the EulerFPSCamera the re-orientation was "secretly" a part of the
+`make_font` computation (see how the front vec is based on the current pitch and
+yaw values?). Now that we're storing a quaternion it's a little easier to just
+do the re-orientation with a single rotation at the end.
 
 ```rust
   pub fn update_position(&mut self, keys: &HashSet<VirtualKeyCode>, distance: f32) {
