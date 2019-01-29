@@ -1564,7 +1564,9 @@ impl EulerFPSCamera {
     ])
   }
 
-  /// Adjusts the camera's orientation (within its limits).
+  /// Adjusts the camera's orientation.
+  ///
+  /// Input deltas should be in _degrees_, pitch is capped at +/- 89 degrees.
   pub fn update_orientation(&mut self, d_pitch_deg: f32, d_yaw_deg: f32) {
     self.pitch_deg = (self.pitch_deg + d_pitch_deg).max(-89.0).min(89.0);
     self.yaw_deg = (self.yaw_deg + d_yaw_deg) % 360.0;
@@ -1626,7 +1628,15 @@ pub struct QuaternionFreeCamera {
 }
 impl QuaternionFreeCamera {
   /// Updates the orientation of the camera.
+  ///
+  /// Input deltas should be... very small values of some sort. Probably across
+  /// a -1.0 to 1.0 inclusive range? Like, +/- `0.0005` is a good amount for one
+  /// frame of movement in any particular delta. Honestly, more research is
+  /// probably needed in this area.
   pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
+    // If you change the `1.0` here it changes the scale that the delta values
+    // are in. The scale is _probably_ `1-w*w`. If you set this to 0.0 you'll
+    // get nothing drawn.
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
     self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }

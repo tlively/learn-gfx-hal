@@ -791,7 +791,8 @@ So we take our inputs that are in really small values, like `0.0005` levels of
 small, and then we just make a quaternion _directly_ from that with
 [nalgebra_glm::quat](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.quat.html).
 It expects four values, and we have three values, so what should the fourth
-value be? I don't know. `x`, `y`, `z`, and `w` are defined like this:
+value be? I don't know. `x`, `y`, `z`, and `w` are defined like this for a unit
+quaternion:
 
 ```
 // RotationAngle is in radians
@@ -806,8 +807,11 @@ gave us. Soooo.... we pick `w=1.0`. Why? because
 [Groves](https://github.com/grovesNL) suggested it. I'm not joking, that's the
 real reason. The crazy part is that it works. Actually any non-zero `w` value
 works, and higher `w` values _decrease_ how much effect the other delta values
-have. `w=1.0` seems to be fine enough, so we'll stick with it. We're deep into
-the realm of magic and cargo cult programming anyway.
+have. `w=1.0` seems to be fine enough, so we'll stick with it. I'm told that
+_probably_ the input deltas act like they're scaled in the range `1.0 - w*w`,
+which, if true, would explain why nothing draws when `w=0.0`.
+
+We're _deep_ into the realm of magic and cargo cult programming.
 
 Once we have this `delta_quat`, which purports to describe the change from the
 current orientation to the next orientation, we have to
