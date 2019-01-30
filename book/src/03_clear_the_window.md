@@ -1404,9 +1404,9 @@ let render_pass = {
 
 ## Targets For Rendering
 
-We've got all these images, but we can't use them as it is. Vulkan wants to know
-more because it wants all the memory for each step to be as perfectly laid out
-as possible.
+We've got all these images, but we can't use them as it is. The backend wants to
+know more because it wants all the memory for each step to be as perfectly laid
+out as possible.
 
 ### ImageView
 
