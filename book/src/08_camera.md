@@ -915,8 +915,8 @@ in:
    two of them gives a tiny number that almost vanishes
 
 So all cosines are cancelled out, any term with more than one sine is wholly
-cancelled out, and all remaining sines are replaced by the actual angles and
-(when you use `w=1.0`) you get an approximation of
+cancelled out, and all remaining sines are replaced by the actual angles and you
+get an approximation of
 
 ```
 q = 1 + (pitch, yaw, roll)
