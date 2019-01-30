@@ -894,7 +894,7 @@ q(yaw) * q(pitch) = (cos yaw + (0, sin yaw, 0)) * (cos pitch + (sin pitch, 0, 0)
 or alternately
 
 ```
-(cos yaw * cos pitch) + (cos yaw * sin pitch, sin yaw * cos pitch, 0))
+(cos yaw * cos pitch) + (cos yaw * sin pitch, sin yaw * cos pitch, 0)
 ```
 
 And then we multiply in the q(roll) on the right to get...
