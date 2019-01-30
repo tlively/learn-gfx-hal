@@ -52,7 +52,7 @@ in debug builds, we want to only activate this attribute in builds _without_
 
 (Note: if you have `windows_subsystem = "windows"` set on a program and run it
 from the command line of a terminal _other than_ `cmd.exe` and PowerShell (eg:
-GitBash) you might still get terminal output. But you have to ask yourself, who
+Git Bash) you might still get terminal output. But you have to ask yourself, who
 would be so heretical?
 
 # Orthographic Projection
