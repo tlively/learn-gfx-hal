@@ -868,21 +868,29 @@ if `w` can affect the rotation speed.... what?
 Okay, _this_ is where [ax6](https://github.com/aaaaaa123456789) swooped in because
 they know quaternions and they don't like cargo cult programming.
 
-So imagine that we wanted to adjust _just one_ axis. That's easy.
+So imagine that we wanted to adjust _just one_ axis. That's easy. Keeping in
+mind that we're using _double_ radians in place of radians, each axis has a
+formula for it like this:
 
 ```
+// double radian formulas, divide the angle by 2 for normal radians
 q(pitch) = cos(pitch) + (sin(pitch), 0, 0)
 q(yaw) = cos(yaw) + (0, sin(yaw), 0)
 q(roll) = cos(roll) + (0, 0, sin(roll))
-
-new = old * q(pitch)
 ```
 
-But we want three, okay, so just like with stacking up matrix transforms we can
-stack up quaternion multiplications by adding more on the right.
+So we just pick one of those and 
 
 ```
-new = old * q(pitch) * q(yaw) * q(roll)
+new = old * q(yaw)
+```
+
+But we want three adjustments. Okay, so just like with stacking up matrix
+transforms we can stack up quaternion multiplications by adding more on the
+right.
+
+```
+new = old * q(yaw) * q(pitch) * q(roll)
 ```
 
 But what does that _actually_ mean if you expand it out?
@@ -894,7 +902,7 @@ q(yaw) * q(pitch) = (cos yaw + (0, sin yaw, 0)) * (cos pitch + (sin pitch, 0, 0)
 or alternately
 
 ```
-(cos yaw * cos pitch) + (cos yaw * sin pitch, sin yaw * cos pitch, 0)
+(cos yaw * cos pitch) + (cos yaw * sin pitch, sin yaw * cos pitch, - sin yaw * sin pitch)
 ```
 
 And then we multiply in the q(roll) on the right to get...
