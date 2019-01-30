@@ -25,7 +25,11 @@ that whole group.
   like field of view angle come into play.
 
 So in this lesson we'll first show an Orthographic Projection matrix, and then
-we'll focus on two different camera types
+we'll focus on two different camera types.
+
+Side Note: Within math in general there _are_ also other types of transformation
+besides translate, rotate, and scale. However, we don't use them in our graphics
+programming.
 
 ## Quick Patch
 
@@ -364,15 +368,15 @@ distance value and add it to our position.
   }
 ```
 
-I've implemented it as a "flying" camera. It uses the front vector for movement,
-so if you look up while going forward then you also move up (depending on
-pitch). I've also set `Q` and `E` to shift the camera directly up and down. If
-that's not appropriate for your own program then you'd want to compute a forward
-vector with just X and Z changes based on `yaw` alone. What you'd probably
-actually want is to directly place the camera within the location given to you
-by some physics object as it moves through the simulation, and just let the
-physics system handle all the position updates. Just assigning to the position
-field directly is fine, that's why it's `pub`.
+I've implemented it as a "flying" style camera here. It uses the front vector
+for movement, so if you look up while going forward then you also move up
+(depending on pitch). I've also set `Q` and `E` to shift the camera directly up
+and down. If that's not appropriate for your own program then you'd want to
+compute a forward vector with just X and Z changes based on `yaw` alone. What
+you'd probably actually want is to directly place the camera within the location
+given to you by some physics object as it moves through the simulation, and just
+let the physics system handle all the position updates. Just assigning to the
+position field directly is fine, that's why it's `pub`.
 
 (Note, the `A` and `D` math is sensitive to the fact that the projection matrix
 is flipping `Y` values _after_ they pass through the View matrix. In other
@@ -763,13 +767,14 @@ but for normal use that's not a danger, and if you really need to do big
 orientation changes you can break it into a series of smaller changes.
 
 The math here is actually so complicated that I honestly don't know how most of
-it works. However, [termhn](https://github.com/termhn) managed to ~~help me~~
-_do most of the work_ and we got a quaternion free camera going with only mild
-struggles. Cargo cult programming at its finest.
+it works exactly. However, [termhn](https://github.com/termhn) managed to ~~help
+me~~ _just tell me what to try over and over until it worked_ and we got a
+quaternion free camera going with only mild struggles. Cargo cult programming at
+its finest.
 
 So we start with our QuaternionFreeCamera struct, once again we have a public
-position field and an internal way to track our orientation. In this case it's a
-quaternion now.
+position field and an internal way to track our orientation. Instead of storing
+euler angles we store a quaternion.
 
 ```rust
 #[derive(Debug, Clone, Copy)]
@@ -779,55 +784,163 @@ pub struct QuaternionFreeCamera {
 }
 ```
 
-Now we want to update the orientation. Instead of giving pitch and yaw changes
-in degrees we give pitch, yaw, _and roll_ changes in... uh, non-unit values?
-There aren't really units here. This is honestly the most baffling part of it,
-because what I'm about to show you works, but no one that I've asked has been
-able to explain _why_ it works. The math involved came partly from [this
-article](http://in2gpu.com/2016/03/14/opengl-fps-camera-quaternion/) but even
-they don't explain exactly why the formula works out.
+Now we want to update the orientation. How do we even update a quaternion? Well,
+you don't do it directly in an `x += 1` sort of way. Instead, if we take the
+desired change in orientation as a quaternion, we can multiply it by our current
+quaternion and the output quaternion is our old one with the change applied.
+This is somewhat magical, but it's _similar_ to how you can multiply one
+transformation matrix with another and they "combine" into a new transformation.
 
-So we take our inputs that are in really small values, like `0.0005` levels of
-small, and then we just make a quaternion _directly_ from that with
-[nalgebra_glm::quat](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.quat.html).
-It expects four values, and we have three values, so what should the fourth
-value be? I don't know. `x`, `y`, `z`, and `w` are defined like this for a unit
-quaternion:
+And I promised that this time we can roll too, so our update function starts
+like this:
+
+```rust
+impl QuaternionFreeCamera {
+  pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
+    unimplemented!();
+  }
+```
+
+Please note that we're _no longer dealing in degrees_. You'll see why in a
+moment.
+
+Alright so what _is_ a quaternion? Well it's just a way to talk about a 3d
+sphere on the surface of a 4d hypersphere. Obviously. Totally normal concept.
+How do we represent a quaternion? Well, there's one real axis and three
+imaginary axes. You know how a standard imaginary number is like `a + bi`?
+That's one real axis and one imaginary axis. A quaternion is just more imaginary
+axes, so we write them as `a + bi + cj+ dk`.
+
+In code terms, a quaternion is basically four `f32` values (well, could be
+`f64`, but you know). Normally to make a quaternion you'd use an angle and 3d
+axis. The angle is of course in radians and then axis should of course be
+normalized. Then you use this formula to get the four components:
 
 ```
-// RotationAngle is in radians
 x = RotationAxis.x * sin(RotationAngle / 2)
 y = RotationAxis.y * sin(RotationAngle / 2)
 z = RotationAxis.z * sin(RotationAngle / 2)
 w = cos(RotationAngle / 2)
 ```
 
-And we don't have an axis or an angle, we just have some random values someone
-gave us. We can't really hope to form a unit quaternion at all, we'll just have
-to make a non-unit quaternion. Soooo.... we pick `w=1.0`. Why? because
-[Groves](https://github.com/grovesNL) suggested it. I'm not joking, that's the
-real reason. The crazy part is that it works. Actually any non-zero `w` value
-works, and higher `w` values _decrease_ how much effect the other delta values
-have. `w=1.0` seems to be fine enough, so we'll stick with it. I'm told that
-_probably_ the input deltas act like they're scaled in the range `1.0 - w*w`,
-which, if true, would explain why nothing draws when `w=0.0`.
+You'll notice that we've switched from `a`, `b`, `c`, and `d` to using `x`, `y`,
+`z`, and `w`. That's the convention. Presumably because folks wanted to have a
+component output that's related to the input `x` axis also be named `x` and
+such. So now our "real" component is the `w` value at the end of the list, not
+the `a` value at the start of the list. Important to keep that straight.
 
-We're _deep_ into the realm of magic and cargo cult programming.
+So we could easily call
+[nalgebra_glm::quat_angle_axis](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.quat_angle_axis.html)
+to make a quaternion... but we don't _have_ an axis and angle. We have euler
+angles in unknown units.
 
-Once we have this `delta_quat`, which purports to describe the change from the
-current orientation to the next orientation, we have to
-[multiply](https://en.wikipedia.org/wiki/Quaternion#Multiplication_of_basis_elements)
-the current quaternion and the delta quaternion. Like with matrix
-multiplication, this is _not_ commutative, so we have to write `self.quat *
-delta_quat`. We're not yet done, because we also have to normalize the
-multiplication output. Without the normalization our orientation quaternion
-would eventually get messed up by accumulated floating point errors. Floating
-point is the worst, except for all the other even worse options.
+This is where it gets strange. You see, I read [an
+article](http://in2gpu.com/2016/03/14/opengl-fps-camera-quaternion/) that
+implied that you can just throw the delta values directly into a quaternion and
+it works. That is, if you call
+[nalgebra_glm::quat](https://docs.rs/nalgebra-glm/0.2.1/nalgebra_glm/fn.quat.html)
+you _can_ specify `x`, `y`, `z`, and `w` without needing to know an axis and
+angle. Normally you probably wouldn't do this unless you were reading in a
+quaternion from a file or something, but that's what the article said to do. I
+tried it, and it works. I was just as shocked as you to see this.
 
 ```rust
-impl QuaternionFreeCamera {
-  pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
+```
+
+Turns out, because of a thing called [Paraxial
+Approximation](https://en.wikipedia.org/wiki/Paraxial_approximation), if you
+have a very small angle (<10 degrees) you can skip computing a `sin` and just
+use the value directly with minimal error compared to having done the `sin`. So
+if we assign an input delta directly to `x`, `y`, or `z` we can _act like_ we
+did the right thing for some small rotation angle and just get a de-normalized
+quaternion value. Okay? So that means that our inputs are effectively _double
+radians_. Obviously(?). If we want to change 1 degree, that's 0.0175 radians,
+and so we'd want only `0.00875` for our delta value.
+
+Well, _almost_. Because we've got three deltas and we need four parts, so what's
+our `w` value? [groves](https://github.com/grovesNL) suggested that "1 is
+usually the identity", so we started with that. And it worked. Do other values
+for `w` work? Yes they also work. As long as the value isn't 0 then it works.
+And smaller `w` makes you spin faster, while large `w` makes you spin slower. So
+if `w` can affect the rotation speed.... what?
+
+Okay, _this_ is where [ax6](https://github.com/aaaaaa123456789) swooped in because
+they know quaternions and they don't like cargo cult programming.
+
+So imagine that we wanted to adjust _just one_ axis. That's easy.
+
+```
+q(pitch) = cos(pitch) + (sin(pitch), 0, 0)
+q(yaw) = cos(yaw) + (0, sin(yaw), 0)
+q(roll) = cos(roll) + (0, 0, sin(roll))
+
+new = old * q(pitch)
+```
+
+But we want three, okay, so just like with stacking up matrix transforms we can
+stack up quaternion multiplications by adding more on the right.
+
+```
+new = old * q(pitch) * q(yaw) * q(roll)
+```
+
+But what does that _actually_ mean if you expand it out?
+
+```
+q(yaw) * q(pitch) = (cos yaw + (0, sin yaw, 0)) * (cos pitch + (sin pitch, 0, 0))
+```
+
+or alternately
+
+```
+(cos yaw * cos pitch) + (cos yaw * sin pitch, sin yaw * cos pitch, 0))
+```
+
+And then we multiply in the q(roll) on the right to get...
+
+```
+q = (cos yaw * cos pitch * cos roll - sin yaw * sin pitch * sin roll) +
+  (cos yaw * sin pitch * cos roll + sin yaw * cos pitch * sin roll,
+  sin yaw * cos pitch * cos roll - cos yaw * sin pitch * sin roll,
+  cos yaw * cos pitch * sin roll - sin yaw * sin pitch * cos roll)
+```
+
+Which is _extremely ugly_, but this is where the Paraxial Approximation kicks
+in:
+
+1) cos(foo) = 1, since the angles are small
+2) sin(foo) = foo, since the angles are small
+3) sin(foo) * sin(bar) = 0, because with angles being that small, multiplying
+   two of them gives a tiny number that almost vanishes
+
+So all cosines are cancelled out, any term with more than one sine is wholly
+cancelled out, and all remaining sines are replaced by the actual angles and
+(when you use `w=1.0`) you get an approximation of
+
+```
+q = 1 + (pitch, yaw, roll)
+```
+
+Since we do a normalization step after multiplying our old quaternion by the
+delta quaternion, the approximation is close enough to let it all work out. Our
+effective rotation angle of the delta quaternion is `2 * arccos(Re(q) / |q|)`,
+with `Re(q)` being "the real part of `q`", meaning `w`.  Since `arccos` has a
+negative derivative, increasing the `w` value reduces the angle of rotation.
+
+**So, if you didn't get all that, it's okay.** It's totally fine. We're _deep_
+into the realm of magic here, so if you just want to use this code without
+understanding why exactly it all adds up that's okay. Honestly I don't quite get
+it myself. Now we finally know how to update our orientation at least:
+
+```rust
+  /// Updates the orientation of the camera.
+  ///
+  /// Inputs should be in double radians, and also limited to being less than 10
+  /// degrees at a time to keep approximation error minimal.
+  pub fn update_orientation(&mut self, d_pitch_2rad: f32, d_yaw_2rad: f32, d_roll_2rad: f32) {
+    // This gives a non-unit quaternion! That's okay because of the normalization step.
+    let delta_quat = glm::quat(d_pitch_2rad, d_yaw_2rad, d_roll_2rad, 1.0);
     self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
 ```
@@ -902,9 +1015,9 @@ Almost!
 
 We have to update `LocalState` to have the new camera type, and we also have to
 update how it computes the orientation deltas. Specifically, we have to turn the
-pitch and yaw changes _way_ down. They're no longer in degrees, they're in...
-uh... well not even Radians I guess. Just... arbitrary units? Anyway, turn the
-mouse sensitivity way down.
+pitch and yaw changes _way_ down. Remember how we talked about the input values
+needing to be small? Something like `0.0005` is a comfortable amount for one
+frame of change.
 
 Also, we will use `Z` and `C` to roll port and starboard.
 
@@ -914,10 +1027,10 @@ Also, we will use `Z` and `C` to roll port and starboard.
     let d_yaw = -input.orientation_change.0 * MOUSE_SENSITIVITY;
     let mut d_roll = 0.0;
     if input.keys_held.contains(&VirtualKeyCode::Z) {
-      d_roll -= 2.0 * input.seconds;
+      d_roll += 0.00875;
     }
     if input.keys_held.contains(&VirtualKeyCode::C) {
-      d_roll += 2.0 * input.seconds;
+      d_roll -= 0.00875;
     }
     self.camera.update_orientation(d_pitch, d_yaw, d_roll);
     self

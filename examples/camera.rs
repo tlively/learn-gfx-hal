@@ -1530,10 +1530,10 @@ impl LocalState {
     let d_yaw = -input.orientation_change.0 * MOUSE_SENSITIVITY;
     let mut d_roll = 0.0;
     if input.keys_held.contains(&VirtualKeyCode::Z) {
-      d_roll -= 2.0 * input.seconds;
+      d_roll += 0.00875;
     }
     if input.keys_held.contains(&VirtualKeyCode::C) {
-      d_roll += 2.0 * input.seconds;
+      d_roll -= 0.00875;
     }
     self.camera.update_orientation(d_pitch, d_yaw, d_roll);
     self
@@ -1629,15 +1629,11 @@ pub struct QuaternionFreeCamera {
 impl QuaternionFreeCamera {
   /// Updates the orientation of the camera.
   ///
-  /// Input deltas should be... very small values of some sort. Probably across
-  /// a -1.0 to 1.0 inclusive range? Like, +/- `0.0005` is a good amount for one
-  /// frame of movement in any particular delta. Honestly, more research is
-  /// probably needed in this area.
-  pub fn update_orientation(&mut self, d_pitch: f32, d_yaw: f32, d_roll: f32) {
-    // This gives a non-unit quaternion! If you change the `1.0` here it changes
-    // the scale that the delta values are in. The scale is _probably_ `1-w*w`.
-    // If you set this to 0.0 you'll get nothing drawn.
-    let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
+  /// Inputs should be in double radians, and also limited to being less than 10
+  /// degrees at a time to keep approximation error minimal.
+  pub fn update_orientation(&mut self, d_pitch_2rad: f32, d_yaw_2rad: f32, d_roll_2rad: f32) {
+    // This gives a non-unit quaternion! That's okay because of the normalization step.
+    let delta_quat = glm::quat(d_pitch_2rad, d_yaw_2rad, d_roll_2rad, 1.0);
     self.quat = glm::quat_normalize(&(self.quat * delta_quat));
   }
 
