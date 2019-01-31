@@ -848,8 +848,9 @@ tried it, and it works. I was just as shocked as you to see this.
     let delta_quat = glm::quat(d_pitch, d_yaw, d_roll, 1.0);
 ```
 
-Turns out, because of a thing called [Paraxial
-Approximation](https://en.wikipedia.org/wiki/Paraxial_approximation), if you
+So I asked around and [PinoBatch](https://github.com/pinobatch) pointed me to a
+thing called [Paraxial
+Approximation](https://en.wikipedia.org/wiki/Paraxial_approximation). If you
 have a very small angle (<10 degrees) you can skip computing a `sin` and just
 use the value directly with minimal error compared to having done the `sin`. So
 if we assign an input delta directly to `x`, `y`, or `z` we can _act like_ we
