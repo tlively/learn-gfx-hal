@@ -744,7 +744,7 @@ And everything works!
 
 Except we can't roll yet.
 
-# Quaternion Free Camera (Slightly Slower, More Freedom)
+# Quaternion Free Camera
 _"what's going on? oh god quaternions, no effin' clue" -Xavil_
 
 Now we're gonna use [Quaternions](https://en.wikipedia.org/wiki/Quaternion).
