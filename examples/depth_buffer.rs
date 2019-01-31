@@ -24,7 +24,7 @@ use gfx_hal::{
   command::{ClearColor, ClearDepthStencil, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
-  image::{Access as ImageAccess, Extent, Layout, SubresourceRange, Usage, ViewKind},
+  image::{Access as ImageAccess, Layout, SubresourceRange, Usage, ViewKind},
   memory::{Pod, Properties, Requirements},
   pass::{
     Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDependency,
@@ -757,7 +757,7 @@ impl HalState {
         accesses: ImageAccess::empty()
           ..(ImageAccess::COLOR_ATTACHMENT_READ
             | ImageAccess::COLOR_ATTACHMENT_WRITE
-            | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE
+            | ImageAccess::DEPTH_STENCIL_ATTACHMENT_READ
             | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE),
       };
       let out_dependency = SubpassDependency {
@@ -766,7 +766,7 @@ impl HalState {
           ..PipelineStage::COLOR_ATTACHMENT_OUTPUT,
         accesses: (ImageAccess::COLOR_ATTACHMENT_READ
           | ImageAccess::COLOR_ATTACHMENT_WRITE
-          | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE
+          | ImageAccess::DEPTH_STENCIL_ATTACHMENT_READ
           | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE)..ImageAccess::empty(),
       };
       unsafe {
@@ -1267,7 +1267,7 @@ impl HalState {
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
-      const QUAD_CLEAR: [ClearValue; 2] = [
+      const CUBE_CLEAR: [ClearValue; 2] = [
         ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0])),
         ClearValue::DepthStencil(ClearDepthStencil(1.0, 0)),
       ];
@@ -1277,7 +1277,7 @@ impl HalState {
           &self.render_pass,
           &self.framebuffers[i_usize],
           self.render_area,
-          QUAD_CLEAR.iter(),
+          CUBE_CLEAR.iter(),
         );
         encoder.bind_graphics_pipeline(&self.graphics_pipeline);
         encoder.bind_vertex_buffers(0, Some((self.cube_vertices.buffer.deref(), 0)));
