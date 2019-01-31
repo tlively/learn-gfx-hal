@@ -1,1 +1,1 @@
-cargo run --example camera --features="dx12"
+cargo run --example depth_buffer --features="dx12"

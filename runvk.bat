@@ -1,1 +1,1 @@
-cargo run --example camera --features="vulkan"
+cargo run --example depth_buffer --features="vulkan"
