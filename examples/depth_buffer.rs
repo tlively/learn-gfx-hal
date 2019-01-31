@@ -543,7 +543,6 @@ pub struct HalState {
   cube_vertices: BufferBundle<back::Backend, back::Device>,
   cube_indexes: BufferBundle<back::Backend, back::Device>,
   depth_images: Vec<DepthImage<back::Backend, back::Device>>,
-  depth_framebuffers: Vec<<back::Backend as Backend>::Framebuffer>,
   texture: LoadedImage<back::Backend, back::Device>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
   descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
@@ -782,7 +781,7 @@ impl HalState {
     };
 
     // Create The ImageViews
-    let (image_views, depth_images, depth_framebuffers) = match backbuffer {
+    let (image_views, depth_images, framebuffers) = match backbuffer {
       Backbuffer::Images(images) => {
         let image_views = images
           .into_iter()
@@ -811,7 +810,7 @@ impl HalState {
           height: extent.height as _,
           depth: 1,
         };
-        let depth_framebuffers = image_views
+        let framebuffers = image_views
           .iter()
           .zip(depth_images.iter())
           .map(|(view, depth_image)| unsafe {
@@ -821,29 +820,9 @@ impl HalState {
               .map_err(|_| "Couldn't crate the framebuffer!")
           })
           .collect::<Result<Vec<_>, &str>>()?;
-        (image_views, depth_images, depth_framebuffers)
+        (image_views, depth_images, framebuffers)
       }
       Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
-    };
-
-    // Create Our FrameBuffers
-    let framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-      image_views
-        .iter()
-        .map(|image_view| unsafe {
-          device
-            .create_framebuffer(
-              &render_pass,
-              vec![image_view],
-              Extent {
-                width: extent.width as u32,
-                height: extent.height as u32,
-                depth: 1,
-              },
-            )
-            .map_err(|_| "Failed to create a framebuffer!")
-        })
-        .collect::<Result<Vec<_>, &str>>()?
     };
 
     // Create Our CommandPool
@@ -934,7 +913,6 @@ impl HalState {
       cube_indexes,
       texture,
       depth_images,
-      depth_framebuffers,
       descriptor_pool: ManuallyDrop::new(descriptor_pool),
       descriptor_set: ManuallyDrop::new(descriptor_set),
       _instance: ManuallyDrop::new(instance),
@@ -1361,9 +1339,6 @@ impl core::ops::Drop for HalState {
     unsafe {
       for depth_image in self.depth_images.drain(..) {
         depth_image.manually_drop(&self.device);
-      }
-      for depth_framebuffer in self.depth_framebuffers.drain(..) {
-        self.device.destroy_framebuffer(depth_framebuffer)
       }
       for descriptor_set_layout in self.descriptor_set_layouts.drain(..) {
         self
