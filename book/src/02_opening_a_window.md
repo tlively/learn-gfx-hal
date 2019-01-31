@@ -91,8 +91,14 @@ impl WinitState {
   /// It's possible for the window creation to fail. This is unlikely.
   pub fn new<T: Into<String>>(title: T, size: LogicalSize) -> Result<Self, CreationError> {
     let events_loop = EventsLoop::new();
-    let output = WindowBuilder::new().with_title(title).with_dimensions(size).build(&events_loop);
-    output.map(|window| Self { events_loop, window })
+    let output = WindowBuilder::new()
+      .with_title(title)
+      .with_dimensions(size)
+      .build(&events_loop);
+    output.map(|window| Self {
+      events_loop,
+      window,
+    })
   }
 }
 ```
@@ -109,7 +115,14 @@ impl Default for WinitState {
   /// ## Panics
   /// If a `CreationError` occurs.
   fn default() -> Self {
-    Self::new(WINDOW_NAME, LogicalSize { width: 800.0, height: 600.0 }).expect("Could not create a window!")
+    Self::new(
+      WINDOW_NAME,
+      LogicalSize {
+        width: 800.0,
+        height: 600.0,
+      },
+    )
+    .expect("Could not create a window!")
   }
 }
 ```

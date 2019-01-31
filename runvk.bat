@@ -1,1 +1,1 @@
-cargo run --example coordinates --features="vulkan"
+cargo run --example camera --features="vulkan"

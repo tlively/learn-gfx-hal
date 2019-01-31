@@ -37,6 +37,13 @@ much at once, we'll stop this lesson at an intermediate step. Remember how our
 that much and then stop there. That _alone_ will cover a surprising amount of
 ground.
 
+To be absolutely clear: _PLEASE_ understand that this is a whirlwind tour of
+many corners of the whole process all at once. Since so much needs to be set up
+before you can draw anything, quite a bit gets skimmed over simply so that we
+can talk about all the parts. As it is, this lesson is still more than 10,000
+words long. Future lessons will review different elements of what gets built
+here, and I promise that it makes sense the more you stick with it.
+
 ## Outline Our Target API
 
 So, in the first lesson we had `WinitState` and it just had two public fields.
@@ -751,7 +758,16 @@ Which records a render pass with no secondary command buffers.
 
 Next we... immediately finish the render pass. The RenderPass struct will define
 how to deal with the color buffer, including the clear effect, and the
-ClearValue just picks what color to clear to. We're already done.
+ClearValue just picks what color to clear to.
+
+Note: images can have more than just color data, so we have to put the "clear to
+this color" part into an iterator. In more advanced code you'd specify the clear
+color and also the clear depth value (they're both part of the
+[ClearValue](https://docs.rs/gfx-hal/0.1.0/gfx_hal/command/enum.ClearValue.html)
+enum). We're not using the depth buffer at the moment, so it's just a 1 element
+array.
+
+After that, we're already done.
 
 ```rust
   pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
@@ -1388,9 +1404,9 @@ let render_pass = {
 
 ## Targets For Rendering
 
-We've got all these images, but we can't use them as it is. Vulkan wants to know
-more because it wants all the memory for each step to be as perfectly laid out
-as possible.
+We've got all these images, but we can't use them as it is. The backend wants to
+know more because it wants all the memory for each step to be as perfectly laid
+out as possible.
 
 ### ImageView
 
