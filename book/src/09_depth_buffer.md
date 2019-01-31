@@ -6,10 +6,11 @@ cubes even if they're farther away. That's not how things should go!
 
 We have to activate a part of the drawing pipeline called the "Depth Buffer".
 It's basically what it sounds like. In addition to recording one color value per
-fragment, there's also now going to be a depth value per fragment. If a later
-draw call _would_ write to a fragment's color, the depth buffer is checked. If
-it "passes" the check (we'll see what that means in a moment) then the new depth
-value is recorded and the new color value is recorded.
+fragment, there's also now going to be a depth value per fragment. If any later
+primitive (from the same draw call or a future draw call) _would_ write to a
+fragment's color, the depth buffer is checked. If it "passes" the check (we'll
+see what that means in a moment) then the new depth value is recorded and the
+new color value is recorded.
 
 # A `DepthImage` Type
 
@@ -127,8 +128,9 @@ We're adding a bit to the render pass creation.
 
 This is _similar to_ the color attachment.
 
-* With the depth attachment we can specify our own format since we don't have to
-  line up with the format that the GPU and surface negotiated.
+* With the depth attachment we don't use the format that the GPU and surface
+  negotiated, that's just for the color data. Instead we use the format that we
+  specify during the `DepthImage` creation.
 * `ops.store` can be changed to `DontCare` because we don't care what happens
   after the full render pass completes. You _could_ store it and check it later,
   and there are good uses for that, but we really don't care right now.
@@ -216,7 +218,8 @@ We just change the call to incorporate the new values:
 
 ## Update the `depth_stencil`
 
-Where we have our descriptor sets and all that we need a new `depth_stencil` definition.
+Where we have our descriptor sets and all that we need a new `depth_stencil`
+definition in the `create_pipeline` function:
 
 ```rust
       let depth_stencil = DepthStencilDesc {
@@ -231,8 +234,9 @@ Where we have our descriptor sets and all that we need a new `depth_stencil` def
 
 Remember how I said that the depth buffer uses "a test"? Well we get limited
 control over what test operation to use. In this case, we're saying that if the
-new fragment's depth value is less than or equal to the old depth value we write
-the new fragment into the depth and color image.
+new fragment's depth value is less than or equal to the old depth value (aka, if
+the new fragment is closer or as close as the previous one) we write the new
+fragment's data into the depth image and color image.
 
 ## Update the drawing
 
