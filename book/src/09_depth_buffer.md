@@ -41,6 +41,14 @@ just one AbstractImage that we use most of the time and then a LoadedImage holds
 an AbstractImage plus a Sampler and all that... but I honestly just don't think
 it's worth the effort to bother with all that layering complication.
 
+Note: in the following code the `DepthImage` uses device local memory (since the
+memory is used very actively in the graphics pipeline process), but in other
+situations you might care to try and find some memory that's both device local
+and _also_ cpu visible (depending on exactly how you use the `DepthImage`). Most
+graphics cards have at least some memory like that. As with other things in
+`gfx-hal`, it always comes down to customizing every part of what's going on
+based on exactly what you're trying to achieve.
+
 ```rust
 impl<B: Backend, D: Device<B>> DepthImage<B, D> {
   pub fn new(adapter: &Adapter<B>, device: &D, extent: Extent2D) -> Result<Self, &'static str> {
