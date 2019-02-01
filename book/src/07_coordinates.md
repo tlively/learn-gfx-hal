@@ -595,8 +595,8 @@ First we have to adjust the `UserInput` type so that the time taken is part of
 the input for the frame. It could go just about anywhere as long as we check the
 time once per frame, but if we consider the timing to be part of the input then
 at some future point we could just start recording inputs and then playing them
-back and they'll play back with the right timing. Bam, we've got looped replay
-for practically nothing.
+back and they'll play back with the right associated timings. Bam, we've got
+looped replay for practically nothing.
 
 ```rust
 #[derive(Debug, Clone, Default)]
@@ -611,37 +611,19 @@ pub struct UserInput {
 Now when we make a `UserInput` value we'll also take the timestamp from the last frame:
 
 ```rust
-  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut SystemTime) -> Self {
+  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut Instant) -> Self {
 ```
 
 And after the call to `poll_events` we also set the `seconds` field.
 
 ```rust
     output.seconds = {
-      let now = SystemTime::now();
-      let res_dur = now.duration_since(*last_timestamp);
+      let now = Instant::now();
+      let duration = now.duration_since(*last_timestamp);
       *last_timestamp = now;
-      match res_dur {
-        Ok(duration) => duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9,
-        Err(ste) => {
-          let duration = ste.duration();
-          -(duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9)
-        }
-      }
+      duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9
     };
 ```
-
-You might be wondering what's going on with that match thing. Well, a
-[Duration](https://doc.rust-lang.org/std/time/struct.Duration.html) is
-technically always some positive value. That's easy to do with
-[Instant](https://doc.rust-lang.org/std/time/struct.Instant.html), since it's a
-magical always increasing clock. However, we can't actually use `Instant` since
-that magical element also makes it not always run at the same speed. We want
-consistent speeds, so we'll use
-[SystemTime](https://doc.rust-lang.org/std/time/struct.SystemTime.html).
-However, the system clock _can_ go backwards. In the rare case that this
-happens, the duration gets returned as an error case. It's still the correct
-delta time, but you have to negate the value since it's a negative delta.
 
 ### LocalState
 

@@ -21,12 +21,15 @@ use core::{
 use gfx_hal::{
   adapter::{Adapter, MemoryTypeId, PhysicalDevice},
   buffer::{IndexBufferView, Usage as BufferUsage},
-  command::{ClearColor, ClearValue, CommandBuffer, MultiShot, Primary},
+  command::{ClearColor, ClearDepthStencil, ClearValue, CommandBuffer, MultiShot, Primary},
   device::Device,
   format::{Aspects, ChannelType, Format, Swizzle},
-  image::{Extent, Layout, SubresourceRange, Usage, ViewKind},
+  image::{Access as ImageAccess, Layout, SubresourceRange, Usage, ViewKind},
   memory::{Pod, Properties, Requirements},
-  pass::{Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDesc},
+  pass::{
+    Attachment, AttachmentLoadOp, AttachmentOps, AttachmentStoreOp, Subpass, SubpassDependency,
+    SubpassDesc, SubpassRef,
+  },
   pool::{CommandPool, CommandPoolCreateFlags},
   pso::{
     AttributeDesc, BakedStates, BasePipeline, BlendDesc, BlendOp, BlendState, ColorBlendDesc,
@@ -50,7 +53,7 @@ use winit::{
   MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
 };
 
-pub const WINDOW_NAME: &str = "Camera";
+pub const WINDOW_NAME: &str = "Depth Buffer";
 
 pub const VERTEX_SOURCE: &str = "#version 450
 layout (push_constant) uniform PushConsts {
@@ -258,6 +261,7 @@ impl<B: Backend, D: Device<B>> BufferBundle<B, D> {
   }
 }
 
+/// Parts for an image that we uploaded from the CPU and use via sampler
 pub struct LoadedImage<B: Backend, D: Device<B>> {
   pub image: ManuallyDrop<B::Image>,
   pub requirements: Requirements,
@@ -463,9 +467,82 @@ impl<B: Backend, D: Device<B>> LoadedImage<B, D> {
   }
 }
 
+/// Parts for a depth buffer image
+pub struct DepthImage<B: Backend, D: Device<B>> {
+  pub image: ManuallyDrop<B::Image>,
+  pub requirements: Requirements,
+  pub memory: ManuallyDrop<B::Memory>,
+  pub image_view: ManuallyDrop<B::ImageView>,
+  pub phantom: PhantomData<D>,
+}
+impl<B: Backend, D: Device<B>> DepthImage<B, D> {
+  pub fn new(adapter: &Adapter<B>, device: &D, extent: Extent2D) -> Result<Self, &'static str> {
+    unsafe {
+      let mut the_image = device
+        .create_image(
+          gfx_hal::image::Kind::D2(extent.width, extent.height, 1, 1),
+          1,
+          Format::D32Float,
+          gfx_hal::image::Tiling::Optimal,
+          gfx_hal::image::Usage::DEPTH_STENCIL_ATTACHMENT,
+          gfx_hal::image::ViewCapabilities::empty(),
+        )
+        .map_err(|_| "Couldn't crate the image!")?;
+      let requirements = device.get_image_requirements(&the_image);
+      let memory_type_id = adapter
+        .physical_device
+        .memory_properties()
+        .memory_types
+        .iter()
+        .enumerate()
+        .find(|&(id, memory_type)| {
+          // BIG NOTE: THIS IS DEVICE LOCAL NOT CPU VISIBLE
+          requirements.type_mask & (1 << id) != 0
+            && memory_type.properties.contains(Properties::DEVICE_LOCAL)
+        })
+        .map(|(id, _)| MemoryTypeId(id))
+        .ok_or("Couldn't find a memory type to support the image!")?;
+      let memory = device
+        .allocate_memory(memory_type_id, requirements.size)
+        .map_err(|_| "Couldn't allocate image memory!")?;
+      device
+        .bind_image_memory(&memory, 0, &mut the_image)
+        .map_err(|_| "Couldn't bind the image memory!")?;
+      let image_view = device
+        .create_image_view(
+          &the_image,
+          gfx_hal::image::ViewKind::D2,
+          Format::D32Float,
+          gfx_hal::format::Swizzle::NO,
+          SubresourceRange {
+            aspects: Aspects::DEPTH,
+            levels: 0..1,
+            layers: 0..1,
+          },
+        )
+        .map_err(|_| "Couldn't create the image view!")?;
+      Ok(Self {
+        image: ManuallyDrop::new(the_image),
+        requirements,
+        memory: ManuallyDrop::new(memory),
+        image_view: ManuallyDrop::new(image_view),
+        phantom: PhantomData,
+      })
+    }
+  }
+
+  pub unsafe fn manually_drop(&self, device: &D) {
+    use core::ptr::read;
+    device.destroy_image_view(ManuallyDrop::into_inner(read(&self.image_view)));
+    device.destroy_image(ManuallyDrop::into_inner(read(&self.image)));
+    device.free_memory(ManuallyDrop::into_inner(read(&self.memory)));
+  }
+}
+
 pub struct HalState {
   cube_vertices: BufferBundle<back::Backend, back::Device>,
   cube_indexes: BufferBundle<back::Backend, back::Device>,
+  depth_images: Vec<DepthImage<back::Backend, back::Device>>,
   texture: LoadedImage<back::Backend, back::Device>,
   descriptor_set_layouts: Vec<<back::Backend as Backend>::DescriptorSetLayout>,
   descriptor_pool: ManuallyDrop<<back::Backend as Backend>::DescriptorPool>,
@@ -656,61 +733,96 @@ impl HalState {
         stencil_ops: AttachmentOps::DONT_CARE,
         layouts: Layout::Undefined..Layout::Present,
       };
+      let depth_attachment = Attachment {
+        format: Some(Format::D32Float),
+        samples: 1,
+        ops: AttachmentOps {
+          load: AttachmentLoadOp::Clear,
+          store: AttachmentStoreOp::DontCare,
+        },
+        stencil_ops: AttachmentOps::DONT_CARE,
+        layouts: Layout::Undefined..Layout::DepthStencilAttachmentOptimal,
+      };
       let subpass = SubpassDesc {
         colors: &[(0, Layout::ColorAttachmentOptimal)],
-        depth_stencil: None,
+        depth_stencil: Some(&(1, Layout::DepthStencilAttachmentOptimal)),
         inputs: &[],
         resolves: &[],
         preserves: &[],
       };
+      let in_dependency = SubpassDependency {
+        passes: SubpassRef::External..SubpassRef::Pass(0),
+        stages: PipelineStage::COLOR_ATTACHMENT_OUTPUT
+          ..PipelineStage::COLOR_ATTACHMENT_OUTPUT | PipelineStage::EARLY_FRAGMENT_TESTS,
+        accesses: ImageAccess::empty()
+          ..(ImageAccess::COLOR_ATTACHMENT_READ
+            | ImageAccess::COLOR_ATTACHMENT_WRITE
+            | ImageAccess::DEPTH_STENCIL_ATTACHMENT_READ
+            | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE),
+      };
+      let out_dependency = SubpassDependency {
+        passes: SubpassRef::Pass(0)..SubpassRef::External,
+        stages: PipelineStage::COLOR_ATTACHMENT_OUTPUT | PipelineStage::EARLY_FRAGMENT_TESTS
+          ..PipelineStage::COLOR_ATTACHMENT_OUTPUT,
+        accesses: (ImageAccess::COLOR_ATTACHMENT_READ
+          | ImageAccess::COLOR_ATTACHMENT_WRITE
+          | ImageAccess::DEPTH_STENCIL_ATTACHMENT_READ
+          | ImageAccess::DEPTH_STENCIL_ATTACHMENT_WRITE)..ImageAccess::empty(),
+      };
       unsafe {
         device
-          .create_render_pass(&[color_attachment], &[subpass], &[])
+          .create_render_pass(
+            &[color_attachment, depth_attachment],
+            &[subpass],
+            &[in_dependency, out_dependency],
+          )
           .map_err(|_| "Couldn't create a render pass!")?
       }
     };
 
     // Create The ImageViews
-    let image_views: Vec<_> = match backbuffer {
-      Backbuffer::Images(images) => images
-        .into_iter()
-        .map(|image| unsafe {
-          device
-            .create_image_view(
-              &image,
-              ViewKind::D2,
-              format,
-              Swizzle::NO,
-              SubresourceRange {
-                aspects: Aspects::COLOR,
-                levels: 0..1,
-                layers: 0..1,
-              },
-            )
-            .map_err(|_| "Couldn't create the image_view for the image!")
-        })
-        .collect::<Result<Vec<_>, &str>>()?,
+    let (image_views, depth_images, framebuffers) = match backbuffer {
+      Backbuffer::Images(images) => {
+        let image_views = images
+          .into_iter()
+          .map(|image| unsafe {
+            device
+              .create_image_view(
+                &image,
+                ViewKind::D2,
+                format,
+                Swizzle::NO,
+                SubresourceRange {
+                  aspects: Aspects::COLOR,
+                  levels: 0..1,
+                  layers: 0..1,
+                },
+              )
+              .map_err(|_| "Couldn't create the image_view for the image!")
+          })
+          .collect::<Result<Vec<_>, &str>>()?;
+        let depth_images = image_views
+          .iter()
+          .map(|_| DepthImage::new(&adapter, &device, extent))
+          .collect::<Result<Vec<_>, &str>>()?;
+        let image_extent = gfx_hal::image::Extent {
+          width: extent.width as _,
+          height: extent.height as _,
+          depth: 1,
+        };
+        let framebuffers = image_views
+          .iter()
+          .zip(depth_images.iter())
+          .map(|(view, depth_image)| unsafe {
+            let attachments: ArrayVec<[_; 2]> = [view, &depth_image.image_view].into();
+            device
+              .create_framebuffer(&render_pass, attachments, image_extent)
+              .map_err(|_| "Couldn't crate the framebuffer!")
+          })
+          .collect::<Result<Vec<_>, &str>>()?;
+        (image_views, depth_images, framebuffers)
+      }
       Backbuffer::Framebuffer(_) => unimplemented!("Can't handle framebuffer backbuffer!"),
-    };
-
-    // Create Our FrameBuffers
-    let framebuffers: Vec<<back::Backend as Backend>::Framebuffer> = {
-      image_views
-        .iter()
-        .map(|image_view| unsafe {
-          device
-            .create_framebuffer(
-              &render_pass,
-              vec![image_view],
-              Extent {
-                width: extent.width as u32,
-                height: extent.height as u32,
-                depth: 1,
-              },
-            )
-            .map_err(|_| "Failed to create a framebuffer!")
-        })
-        .collect::<Result<Vec<_>, &str>>()?
     };
 
     // Create Our CommandPool
@@ -800,6 +912,7 @@ impl HalState {
       cube_vertices,
       cube_indexes,
       texture,
+      depth_images,
       descriptor_pool: ManuallyDrop::new(descriptor_pool),
       descriptor_set: ManuallyDrop::new(descriptor_set),
       _instance: ManuallyDrop::new(instance),
@@ -921,7 +1034,10 @@ impl HalState {
       };
 
       let depth_stencil = DepthStencilDesc {
-        depth: DepthTest::Off,
+        depth: DepthTest::On {
+          fun: gfx_hal::pso::Comparison::LessEqual,
+          write: true,
+        },
         depth_bounds: false,
         stencil: StencilTest::Off,
       };
@@ -1151,15 +1267,17 @@ impl HalState {
     // RECORD COMMANDS
     unsafe {
       let buffer = &mut self.command_buffers[i_usize];
-      const QUAD_CLEAR: [ClearValue; 1] =
-        [ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0]))];
+      const CUBE_CLEAR: [ClearValue; 2] = [
+        ClearValue::Color(ClearColor::Float([0.1, 0.2, 0.3, 1.0])),
+        ClearValue::DepthStencil(ClearDepthStencil(1.0, 0)),
+      ];
       buffer.begin(false);
       {
         let mut encoder = buffer.begin_render_pass_inline(
           &self.render_pass,
           &self.framebuffers[i_usize],
           self.render_area,
-          QUAD_CLEAR.iter(),
+          CUBE_CLEAR.iter(),
         );
         encoder.bind_graphics_pipeline(&self.graphics_pipeline);
         encoder.bind_vertex_buffers(0, Some((self.cube_vertices.buffer.deref(), 0)));
@@ -1219,6 +1337,9 @@ impl core::ops::Drop for HalState {
   fn drop(&mut self) {
     let _ = self.device.wait_idle();
     unsafe {
+      for depth_image in self.depth_images.drain(..) {
+        depth_image.manually_drop(&self.device);
+      }
       for descriptor_set_layout in self.descriptor_set_layouts.drain(..) {
         self
           .device

@@ -16,8 +16,15 @@ _one_ triangle (three points), and even then, only a 2D triangle of `(x,y)`
 points.
 
 ```rust
+#[derive(Debug, Clone, Copy)]
 pub struct Triangle {
-  points: [[f32; 2]; 3]
+  pub points: [[f32; 2]; 3],
+}
+impl Triangle {
+  pub fn points_flat(self) -> [f32; 6] {
+    let [[a, b], [c, d], [e, f]] = self.points;
+    [a, b, c, d, e, f]
+  }
 }
 ```
 
@@ -620,6 +627,17 @@ pixels on the screen. So we specify a [Rasterizer](https://docs.rs/gfx-hal/0.1.0
   _wouldn't_ support this extension though, so we won't request it starting out,
   because with just one triangle it doesn't make a difference in the scene.
 
+```rust
+      let rasterizer = Rasterizer {
+        depth_clamping: false,
+        polygon_mode: PolygonMode::Fill,
+        cull_face: Face::NONE,
+        front_face: FrontFace::Clockwise,
+        depth_bias: None,
+        conservative: false,
+      };
+```
+
 ## Fragment Shader
 
 So the rasterizer turned all of our geometry elements into pixel locations for
@@ -640,10 +658,10 @@ per-fragment data has to come through the whole pipeline process.
 A single geometry element can have many fragments. Imagine a triangle that goes
 from the bottom left, to the top left, to the top right. There's only three
 vertices, but _half the screen_ is covered in fragments. The pipeline
-automatically interpolates the values for any fragment that's not directly from
-a vertex (which is almost every fragment ever, honestly). That might sound kinda
-spooky, but the weird part is that it works really well even once textures and
-stuff are involved.
+interpolates the values for any fragment that's not directly from a vertex
+(which is almost every fragment ever, honestly). That might sound kinda spooky,
+but the weird part is that it works really well even once textures and stuff are
+involved.
 
 ### Multisampling
 

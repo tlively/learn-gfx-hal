@@ -43,7 +43,7 @@ use gfx_hal::{
   Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use nalgebra_glm as glm;
-use std::time::SystemTime;
+use std::time::Instant;
 use winit::{
   dpi::LogicalSize, CreationError, Event, EventsLoop, Window, WindowBuilder, WindowEvent,
 };
@@ -1342,7 +1342,7 @@ pub struct UserInput {
 }
 
 impl UserInput {
-  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut SystemTime) -> Self {
+  pub fn poll_events_loop(events_loop: &mut EventsLoop, last_timestamp: &mut Instant) -> Self {
     let mut output = UserInput::default();
     events_loop.poll_events(|event| match event {
       Event::WindowEvent {
@@ -1364,16 +1364,10 @@ impl UserInput {
       _ => (),
     });
     output.seconds = {
-      let now = SystemTime::now();
-      let res_dur = now.duration_since(*last_timestamp);
+      let now = Instant::now();
+      let duration = now.duration_since(*last_timestamp);
       *last_timestamp = now;
-      match res_dur {
-        Ok(duration) => duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9,
-        Err(ste) => {
-          let duration = ste.duration();
-          -(duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9)
-        }
-      }
+      duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9
     };
     output
   }
@@ -1457,7 +1451,7 @@ fn main() {
       spare_time: 0.0,
     }
   };
-  let mut last_timestamp = SystemTime::now();
+  let mut last_timestamp = Instant::now();
 
   loop {
     let inputs = UserInput::poll_events_loop(&mut winit_state.events_loop, &mut last_timestamp);
