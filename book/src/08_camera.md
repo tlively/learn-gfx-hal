@@ -507,7 +507,7 @@ polling method has a few more arguments.
 
 ```rust
   pub fn poll_events_loop(
-    winit_state: &mut WinitState, last_timestamp: &mut SystemTime,
+    winit_state: &mut WinitState, last_timestamp: &mut Instant,
     keys_held: &mut HashSet<VirtualKeyCode>, focused: &mut bool, grabbed: &mut bool,
   ) -> Self {
 ```
@@ -531,7 +531,7 @@ borrow.
 
 ```rust
 impl UserInput {
-  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut SystemTime) -> Self {
+  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut Instant) -> Self {
     let mut output = UserInput::default();
     // We have to manually split the borrow here. rustc, why you so dumb sometimes?
     let events_loop = &mut winit_state.events_loop;

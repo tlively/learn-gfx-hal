@@ -47,7 +47,7 @@ use gfx_hal::{
   Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use nalgebra_glm as glm;
-use std::{collections::HashSet, time::SystemTime};
+use std::{collections::HashSet, time::Instant};
 use winit::{
   dpi::LogicalSize, CreationError, DeviceEvent, ElementState, Event, EventsLoop, KeyboardInput,
   MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
@@ -1446,7 +1446,7 @@ pub struct UserInput {
 }
 
 impl UserInput {
-  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut SystemTime) -> Self {
+  pub fn poll_events_loop(winit_state: &mut WinitState, last_timestamp: &mut Instant) -> Self {
     let mut output = UserInput::default();
     // We have to manually split the borrow here. rustc, why you so dumb sometimes?
     let events_loop = &mut winit_state.events_loop;
@@ -1578,16 +1578,10 @@ impl UserInput {
       _ => (),
     });
     output.seconds = {
-      let now = SystemTime::now();
-      let res_dur = now.duration_since(*last_timestamp);
+      let now = Instant::now();
+      let duration = now.duration_since(*last_timestamp);
       *last_timestamp = now;
-      match res_dur {
-        Ok(duration) => duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9,
-        Err(ste) => {
-          let duration = ste.duration();
-          -(duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9)
-        }
-      }
+      duration.as_secs() as f32 + duration.subsec_nanos() as f32 * 1e-9
     };
     output.keys_held = if *grabbed {
       keys_held.clone()
@@ -1851,7 +1845,7 @@ fn main() {
       is_orthographic: false,
     }
   };
-  let mut last_timestamp = SystemTime::now();
+  let mut last_timestamp = Instant::now();
 
   loop {
     let inputs = UserInput::poll_events_loop(&mut winit_state, &mut last_timestamp);
