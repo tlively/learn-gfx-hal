@@ -335,7 +335,7 @@ values the same as we clean up the other stuff in each vec.
 We're already done! That was the whole thing! One of the shortest lessons yet,
 but quite useful to be able to do.
 
-![depth-buffer-complete](depth-buffer-complete.png)
+![depth-buffer-complete](images/depth-buffer-complete.png)
 
 As always, this example's code can be viewed in the
 [examples](https://github.com/Lokathor/learn-gfx-hal/tree/master/examples)
