@@ -375,7 +375,7 @@ A **Shader** is one of several parts of the graphical pipeline on the GPU.
 There's several stages of shader, as well as some non-shader stages. Right here
 I'm going to go ahead and use a graphic from the [Graphics Pipeline
 Basics](https://vulkan-tutorial.com/Drawing_a_triangle/Graphics_pipeline_basics)
-potion of the [vulkan-tutorial.com](vulkan-tutorial.com) tutorial, because
+potion of the [vulkan-tutorial.com](https://vulkan-tutorial.com) tutorial, because
 they've got a pretty slick diagram of it.
 
 ![pipeline-diagram](https://vulkan-tutorial.com/images/vulkan_simplified_pipeline.svg)

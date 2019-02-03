@@ -22,13 +22,13 @@ before_script:
 script:
   - |
     if [[ $TRAVIS_OS_NAME == "linux" ]]; then \
-      cargo build --examples --features="vulkan" && \
+      travis_wait cargo build --examples --features="vulkan" && \
       cd book && \
       mdbook build; \
     fi
   - |
     if [[ $TRAVIS_OS_NAME == "osx" ]]; then \
-      cargo build --examples --features="metal";
+      travis_wait cargo build --examples --features="metal";
     fi
 
 deploy:
