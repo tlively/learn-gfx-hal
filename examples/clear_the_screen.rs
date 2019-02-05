@@ -299,14 +299,21 @@ impl HalState {
   /// Draw a frame that's just cleared to the color specified.
   pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
-    let current_frame = self.current_frame;
-    let flight_fence = &self.in_flight_fences[current_frame];
-    let image_available = &self.image_available_semaphores[current_frame];
-    let render_finished = &self.render_finished_semaphores[current_frame];
+    let image_available = &self.image_available_semaphores[self.current_frame];
+    let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
-    self.current_frame = (current_frame + 1) % self.frames_in_flight;
+    self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -315,16 +322,11 @@ impl HalState {
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // RECORD COMMANDS
     unsafe {
-      let buffer = &mut self.command_buffers[current_frame];
+      let buffer = &mut self.command_buffers[i_usize];
       let clear_values = [ClearValue::Color(ClearColor::Float(color))];
       buffer.begin(false);
       buffer.begin_render_pass_inline(
@@ -337,7 +339,7 @@ impl HalState {
     }
 
     // SUBMISSION AND PRESENT
-    let command_buffers = &self.command_buffers[current_frame..=current_frame];
+    let command_buffers = &self.command_buffers[i_usize..=i_usize];
     let wait_semaphores: ArrayVec<[_; 1]> =
       [(image_available, PipelineStage::COLOR_ATTACHMENT_OUTPUT)].into();
     let signal_semaphores: ArrayVec<[_; 1]> = [render_finished].into();
