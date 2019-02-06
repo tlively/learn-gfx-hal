@@ -813,12 +813,12 @@ image out of the swapchain, we just get an index to target later with the
 So now we put it all together, with the signaling in big caps to help make it
 clear.
 
+* Grab an image index that will SIGNAL the `image_available` semaphore once it's
+  fully ready.
 * Get our sync primitives out of our ring buffers
 * WAIT on the current `flight_fence` to know we're in the clear to use this
   position of our ring buffer.
 * Reset that fence so we can pass it as part of our submission later.
-* Grab an image index that will SIGNAL the `image_available` semaphore once it's
-  fully ready.
 * Record our command buffer while we're waiting for that.
 * Submit a command buffer to WAIT on `image_available` and SIGNAL both
   `render_finished` and `flight_fence`.
@@ -828,13 +828,21 @@ clear.
   /// Draw a frame that's just cleared to the color specified.
   pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &str> {
     // SETUP FOR THIS FRAME
-    let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
     let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
     self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -843,12 +851,7 @@ clear.
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // RECORD COMMANDS
     unsafe {
