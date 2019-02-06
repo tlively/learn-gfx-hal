@@ -109,7 +109,10 @@ We just have to edit how we define the extent as we create our Swapchain:
 
 ```rust
 let extent = {
-  let window_client_area = window.get_inner_size().ok_or("Window doesn't exist!")?;
+  let window_client_area = window
+    .get_inner_size()
+    .ok_or("Window doesn't exist!")?
+    .to_physical(window.get_hidpi_factor());
   Extent2D {
     width: caps.extents.end.width.min(window_client_area.width as u32),
     height: caps.extents.end.height.min(window_client_area.height as u32),
