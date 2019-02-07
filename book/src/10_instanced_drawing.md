@@ -342,6 +342,16 @@ average, since each cube is one unit in size, there will be one cube
 distributed every 3 units. Feel free to play around with the scalar
 multiplication if you want a tighter or more spread distribution.
 
+## Change the projection matrix
+
+Finally, we'll need to change the perspective matrix a bit to make the
+'far' plane further away, or else we'll lose some cubes off the far
+clipping plane!
+
+```rust
+let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 1000.0);
+```
+
 Now you should get something like this
 
 ![5000 cubes](images/5kcubes.jpg)
