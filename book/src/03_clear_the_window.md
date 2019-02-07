@@ -816,8 +816,8 @@ clear.
 * Grab an image index that will SIGNAL the `image_available` semaphore once it's
   fully ready.
 * Get our sync primitives out of our ring buffers
-* WAIT on the current `flight_fence` to know we're in the clear to use this
-  position of our ring buffer.
+* WAIT on the `flight_fence` for this image index to know we're in the clear to
+  use this position of our ring buffer.
 * Reset that fence so we can pass it as part of our submission later.
 * Record our command buffer while we're waiting for that.
 * Submit a command buffer to WAIT on `image_available` and SIGNAL both

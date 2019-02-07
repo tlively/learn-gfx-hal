@@ -989,13 +989,21 @@ impl HalState {
   /// Draw a frame that's just cleared to the color specified.
   pub fn draw_clear_frame(&mut self, color: [f32; 4]) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
-    let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
     let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
     self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -1004,12 +1012,7 @@ impl HalState {
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // RECORD COMMANDS
     unsafe {
@@ -1049,13 +1052,21 @@ impl HalState {
 
   pub fn draw_quad_frame(&mut self, quad: Quad) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
-    let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
     let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
     self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -1064,12 +1075,7 @@ impl HalState {
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // WRITE THE QUAD DATA
     unsafe {

@@ -767,8 +767,8 @@ but for normal use that's not a danger, and if you really need to do big
 orientation changes you can break it into a series of smaller changes.
 
 The math here is actually so complicated that I honestly don't know how most of
-it works exactly. However, [termhn](https://github.com/termhn) managed to ~~help
-me~~ _just tell me what to try over and over until it worked_ and we got a
+it works exactly. However, [termhn](https://github.com/termhn) managed to <s>help
+me</s> _just tell me what to try over and over until it worked_ and we got a
 quaternion free camera going with only mild struggles. Cargo cult programming at
 its finest.
 
