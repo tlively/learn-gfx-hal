@@ -18,7 +18,8 @@ glossed over what this "instances" argument means, but that changes
 now!
 
 As you know, the Vertex Shader is run for every one of the vertexes in 
-the bound vertex buffer(s). The data from the vertex buffer gets sent in to "attributes" in the shader and this data changes for each vertex 
+the bound vertex buffer(s). The data from the vertex buffer gets sent in
+to "attributes" in the shader and this data changes for each vertex 
 based on the stride that we told it when creating our pipeline. What 
 we also gave it was a "rate," but we also sort of glossed over this in 
 the past. We have been inputting a "rate" of 0, which means that the 
