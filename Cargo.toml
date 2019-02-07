@@ -24,6 +24,7 @@ arrayvec = "0.4"
 shaderc = "0.3"
 image = "0.21"
 nalgebra-glm = "0.2"
+rand = "0.6"
 
 [dependencies.gfx-backend-vulkan]
 version = "0.1"
