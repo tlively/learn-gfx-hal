@@ -354,3 +354,7 @@ higher!
 ![200k cubes](images/200kcubes.jpg)
 
 Yeah, that's a lot of cubes...
+
+As always, this example's code can be viewed in the
+[examples](https://github.com/Lokathor/learn-gfx-hal/tree/master/examples)
+directory.
