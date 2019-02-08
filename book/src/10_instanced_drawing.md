@@ -1,3 +1,9 @@
+# A new author!
+
+Introducing a new, star, guest author, @termhn! She's been
+helping our main man Lokathor with the previous lessons, but this
+time is hopping in to write the lesson for real. Woo!
+
 # Instanced Drawing
 
 So, now that we have a few cubes on the screen, what could be a more
@@ -9,7 +15,7 @@ thousand objects, this would start to slow down quite a bit, even for
 something as simple as a textured cube, especially on less powerful
 desktop and mobile GPUs. This is *less* of a problem when using one of
 Vulkan/DX12/Metal than it was in the past with OpenGL, but it can still
-bog down form many draw calls.
+bog down from many draw calls.
 
 The solution to this problem is something called *instanced drawing*.
 Whenever we've made a draw call, we've passed *two* ranges, one for 
@@ -17,26 +23,35 @@ vertices and one for *instances*. Until this point, we've sort of
 glossed over what this "instances" argument means, but that changes
 now!
 
-As you know, the Vertex Shader is run for every one of the vertexes in 
+As you know, the Vertex Shader is run for every one of the vertexes in
 the bound vertex buffer(s). The data from the vertex buffer gets sent in
-to "attributes" in the shader and this data changes for each vertex 
-based on the stride that we told it when creating our pipeline. What 
-we also gave it was a "rate," but we also sort of glossed over this in 
-the past. We have been inputting a "rate" of 0, which means that the 
-data in this vertex buffer should advance *for every vertex*. However, 
-if we input a rate of 1, then we are telling it that the data in this 
+to "attributes" in the shader and this data changes for each vertex
+based on the stride that we told it when creating our pipeline. What
+we also gave it was a "rate," but we also sort of glossed over this in
+the past. We have been inputting a "rate" of 0, which means that the
+data in this vertex buffer should advance *for every vertex*. However,
+if we input a rate of 1, then we are telling it that the data in this
 buffer should advance only every *instance*.
 
-If we do a draw call over 50 vertices and 5 instances, it will 
-essentially repeat going over all 50 vertices 5 times, resetting all 
-"rate 0" vertex buffers back to the beginning for each instance. 
-However, all "rate 1" vertex buffers will *stay the same for all the 
-vertices of each instance*, but get *advanced once in between each 
-instance*.
+For example, if we do a draw call over 50 vertices and 5 instances,
+it will repeat all 50 vertices 5 times. Each "rate 0" vertex buffer
+advances once per vertex and resets to the start for the next instance.
+Each "rate 1" vertex buffer will stay the same across a whole instance
+and then advance once in between instances.
 
-Basically, we can get data which stays the same between each 
+Basically, we can get data which stays the same between each
 *instance* of an object. This can often be super useful, as we'll
 explore in this tutorial!
+
+It's also possible to use a `rate` of more than 1. In this case,
+the rate determines the *number of instanes* which will be skipped
+before the data is advanced. For example, for a rate of 2, the
+data will be advanced *every other* instance instead of every
+instance. This feature is supported by default on DX12 and Metal,
+but it is gated behind an extension in Vulkan and the `gfx-hal`
+Vulkan backend does not currently support it. However, work
+[is being done](https://github.com/gfx-rs/gfx/pull/2611) to
+rememdy this.
 
 ## A maximum number of instances
 
@@ -190,42 +205,20 @@ And add four new attributes to `attributes`
 let mut attributes: Vec<AttributeDesc> = Vertex::attributes();
 
 // We need 4 new attributes, one for each column of the matrix we want to put in.
-attributes.push(AttributeDesc {
-    location: 2,
-    binding: 1,
-    element: Element {
-        format: Format::Rgba32Float,
-        offset: 0,
-    },
-});
-attributes.push(AttributeDesc {
-    location: 3,
-    binding: 1,
-    element: Element {
-        format: Format::Rgba32Float,
-        offset: 16,
-    },
-});
-attributes.push(AttributeDesc {
-    location: 4,
-    binding: 1,
-    element: Element {
-        format: Format::Rgba32Float,
-        offset: 32,
-    },
-});
-attributes.push(AttributeDesc {
-    location: 5,
-    binding: 1,
-    element: Element {
-        format: Format::Rgba32Float,
-        offset: 48,
-    },
-});
+for i in 0..4 {
+    attributes.push(AttributeDesc {
+        location: 2 + i,
+        binding: 1,
+        element: Element {
+            format: Format::Rgba32Float,
+            offset: i * 16,
+        },
+    });
+}
 ```
 
 Note the `binding` which matches the `VertexBufferDesc` above it,
-as well as the `location`s which match with what we added to 
+as well as the `location`s which match with what we added to
 our shaders. Also be careful to use the correct `format` and
 `offset`s into each `stride` in the buffer.
 
@@ -233,7 +226,8 @@ our shaders. Also be careful to use the correct `format` and
 
 Now we'll drop all the way down to `draw_cubes_frame`. The first thing
 we'll do is get a mutable reference to the corresponding instance
-buffer just after we get the current image index.
+buffer just after we wait on the acquire'd image's previous
+submission fence.
 
 ```rust
 let cube_instance_buf = &mut self.cube_instances[i_usize];
@@ -319,15 +313,12 @@ manually defining 6 cubes, we'll generate cubes up to our defined
 to the number of them.
 
 ```rust
-let mut cubes = Vec::new();
+let mut cubes = Vec::with_capacity(MAX_CUBES);
 let mut rng = rand::thread_rng();
 for _ in 0..MAX_CUBES {
-    cubes.push(
-        glm::translate(
-            &glm::identity(),
-            &((MAX_CUBES as f32).cbrt() * 3.0 * glm::vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()))
-        )
-    );
+    let scaling = (MAX_CUBES as f32).cbrt() * 3.0;
+    let rand_vec = glm::vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>());
+    cubes.push(glm::translation(&(scaling * rand_vec)));
 }
 LocalState {
     //...
@@ -337,7 +328,7 @@ LocalState {
 ```
 
 You'll notice that the area we're distributing the cubes into is a 
-cube with each side as `cubert(MAX_CUBES) * 3.0`. This means that, on
+cube with each side as `cbrt(MAX_CUBES) * 3.0`. This means that, on
 average, since each cube is one unit in size, there will be one cube
 distributed every 3 units. Feel free to play around with the scalar
 multiplication if you want a tighter or more spread distribution.

@@ -1067,38 +1067,16 @@ impl HalState {
       let mut attributes: Vec<AttributeDesc> = Vertex::attributes();
 
       // We need 4 new attributes, one for each column of the matrix we want to put in.
-      attributes.push(AttributeDesc {
-        location: 2,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 0,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 3,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 16,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 4,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 32,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 5,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 48,
-        },
-      });
+      for i in 0..4 {
+        attributes.push(AttributeDesc {
+          location: 2 + i,
+          binding: 1,
+          element: Element {
+            format: Format::Rgba32Float,
+            offset: i * 16,
+          },
+        });
+      }
 
       let rasterizer = Rasterizer {
         depth_clamping: false,
@@ -1318,13 +1296,21 @@ impl HalState {
     &mut self, view_projection: &glm::TMat4<f32>, models: &[glm::TMat4<f32>],
   ) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
-    let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
     let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
     self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -1333,12 +1319,7 @@ impl HalState {
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // Get corresponding instance buffer for this frame
     let cube_instance_buf = &mut self.cube_instances[i_usize];
@@ -1920,15 +1901,12 @@ fn main() {
       .get_inner_size()
       .map(|logical| logical.into())
       .unwrap_or((0.0, 0.0));
-    let mut cubes = Vec::new();
+    let mut cubes = Vec::with_capacity(MAX_CUBES);
     let mut rng = rand::thread_rng();
     for _ in 0..MAX_CUBES {
-      cubes.push(
-        glm::translate(
-          &glm::identity(),
-          &((MAX_CUBES as f32).cbrt() * 3.0 * glm::vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>()))
-        )
-      );
+      let scaling = (MAX_CUBES as f32).cbrt() * 3.0;
+      let rand_vec = glm::vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>());
+      cubes.push(glm::translation(&(scaling * rand_vec)));
     }
     LocalState {
       frame_width,
