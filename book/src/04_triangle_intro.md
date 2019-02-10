@@ -422,15 +422,8 @@ the GPU. We take a few shader modules and put them together into a
 ```
 
 For this to work, you have to use the `shaderc-rs` crate, which takes _very_
-long to build that first time because it's actually just using `build.rs` to
-download a C++ program and build that. The `shaderc` crate is just a fairly thin
-wrapper over accessing those C++ programs. In fact, if you wanted to ship this
-code to someone it wouldn't work if they didn't also have shaderc-rs installed.
-Don't worry, you can pre-compile the shader code and just ship those byte blobs
-directly, then they wouldn't need the compilers installed. You usually don't
-need to change your shader code at runtime, so it's not a very big deal. This is
-another one of those areas where it's very much a "too early to be easy to use"
-situation.
+long to build that first time because it's actually using `build.rs` to download
+a relatively massive C++ lib and then link that in.
 
 1) We open a compiler
 2) We compile some Vertex Shader source. This is "where do the points go on the
