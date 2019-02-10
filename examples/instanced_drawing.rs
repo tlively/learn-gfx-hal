@@ -52,8 +52,11 @@ use winit::{
   dpi::LogicalSize, CreationError, DeviceEvent, ElementState, Event, EventsLoop, KeyboardInput,
   MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
 };
+use rand::prelude::*;
 
-pub const WINDOW_NAME: &str = "Depth Buffer";
+pub const MAX_CUBES: usize = 50000;
+
+pub const WINDOW_NAME: &str = "Instanced Drawing";
 
 pub const VERTEX_SOURCE: &str = "#version 450
 layout (push_constant) uniform PushConsts {
@@ -902,7 +905,7 @@ impl HalState {
       cube_instances.push(BufferBundle::new(
         &adapter,
         &device,
-        size_of::<f32>() * 16 * 6,
+        size_of::<f32>() * 16 * MAX_CUBES,
         BufferUsage::VERTEX,
       )?);
     }
@@ -1064,38 +1067,16 @@ impl HalState {
       let mut attributes: Vec<AttributeDesc> = Vertex::attributes();
 
       // We need 4 new attributes, one for each column of the matrix we want to put in.
-      attributes.push(AttributeDesc {
-        location: 2,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 0,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 3,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 16,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 4,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 32,
-        },
-      });
-      attributes.push(AttributeDesc {
-        location: 5,
-        binding: 1,
-        element: Element {
-          format: Format::Rgba32Float,
-          offset: 48,
-        },
-      });
+      for i in 0..4 {
+        attributes.push(AttributeDesc {
+          location: 2 + i,
+          binding: 1,
+          element: Element {
+            format: Format::Rgba32Float,
+            offset: i * 16,
+          },
+        });
+      }
 
       let rasterizer = Rasterizer {
         depth_clamping: false,
@@ -1315,13 +1296,21 @@ impl HalState {
     &mut self, view_projection: &glm::TMat4<f32>, models: &[glm::TMat4<f32>],
   ) -> Result<(), &'static str> {
     // SETUP FOR THIS FRAME
-    let flight_fence = &self.in_flight_fences[self.current_frame];
     let image_available = &self.image_available_semaphores[self.current_frame];
     let render_finished = &self.render_finished_semaphores[self.current_frame];
     // Advance the frame _before_ we start using the `?` operator
     self.current_frame = (self.current_frame + 1) % self.frames_in_flight;
 
     let (i_u32, i_usize) = unsafe {
+      let image_index = self
+        .swapchain
+        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
+        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
+      (image_index, image_index as usize)
+    };
+
+    let flight_fence = &self.in_flight_fences[i_usize];
+    unsafe {
       self
         .device
         .wait_for_fence(flight_fence, core::u64::MAX)
@@ -1330,24 +1319,19 @@ impl HalState {
         .device
         .reset_fence(flight_fence)
         .map_err(|_| "Couldn't reset the fence!")?;
-      let image_index = self
-        .swapchain
-        .acquire_image(core::u64::MAX, FrameSync::Semaphore(image_available))
-        .map_err(|_| "Couldn't acquire an image from the swapchain!")?;
-      (image_index, image_index as usize)
-    };
+    }
 
     // Get corresponding instance buffer for this frame
     let cube_instance_buf = &mut self.cube_instances[i_usize];
 
     // Since we just waited for the previous submission's fence we know we can write data to the buffer
-    // We write each model matrix given (up to a max of 6 because that's what we allocated space for)
+    // We write each model matrix given (up to a max of MAX_CUBES because that's what we allocated space for)
     unsafe {
       let mut data_target = self.device
         .acquire_mapping_writer(&cube_instance_buf.memory, 0..cube_instance_buf.requirements.size)
         .map_err(|_| "Failed to acquire an instance buffer mapping writer!")?;
       let stride = 16;
-      for i in 0..models.len().min(6) {
+      for i in 0..models.len().min(MAX_CUBES) {
         data_target[i*stride..(i+1)*stride].copy_from_slice(&models[i].data);
       }
       self.device
@@ -1397,8 +1381,8 @@ impl HalState {
           cast_slice::<f32, u32>(&view_projection.data)
             .expect("this cast never fails for same-aligned same-size data"),
         );
-        // Issue only one draw call with as many model matrices as given up to 6
-        encoder.draw_indexed(0..36, 0, 0..models.len().min(6) as u32);
+        // Issue only one draw call with as many model matrices as given up to MAX_CUBES
+        encoder.draw_indexed(0..36, 0, 0..models.len().min(MAX_CUBES) as u32);
       }
       buffer.finish();
     }
@@ -1717,7 +1701,7 @@ impl LocalState {
     // do world physics if we have any spare time
     while self.spare_time > 0.0 {
       for (i, cube_mut) in self.cubes.iter_mut().enumerate() {
-        let r = ONE_SIXTIETH * 30.0 * (i as f32 + 1.0);
+        let r = ONE_SIXTIETH * 30.0 * (i as f32 + 1.0) / MAX_CUBES as f32;
         *cube_mut = glm::rotate(
           &cube_mut,
           f32::to_radians(r),
@@ -1917,21 +1901,21 @@ fn main() {
       .get_inner_size()
       .map(|logical| logical.into())
       .unwrap_or((0.0, 0.0));
+    let mut cubes = Vec::with_capacity(MAX_CUBES);
+    let mut rng = rand::thread_rng();
+    for _ in 0..MAX_CUBES {
+      let scaling = (MAX_CUBES as f32).cbrt() * 3.0;
+      let rand_vec = glm::vec3(rng.gen::<f32>(), rng.gen::<f32>(), rng.gen::<f32>());
+      cubes.push(glm::translation(&(scaling * rand_vec)));
+    }
     LocalState {
       frame_width,
       frame_height,
-      cubes: vec![
-        glm::identity(),
-        glm::translate(&glm::identity(), &glm::make_vec3(&[1.5, 0.1, 0.0])),
-        glm::translate(&glm::identity(), &glm::make_vec3(&[-3.0, 2.0, 3.0])),
-        glm::translate(&glm::identity(), &glm::make_vec3(&[0.5, -4.0, 4.0])),
-        glm::translate(&glm::identity(), &glm::make_vec3(&[-3.4, -2.3, 1.0])),
-        glm::translate(&glm::identity(), &glm::make_vec3(&[-2.8, -0.7, 5.0])),
-      ],
+      cubes,
       spare_time: 0.0,
       camera: QuaternionFreeCamera::at_position(glm::make_vec3(&[0.0, 0.0, -5.0])),
       perspective_projection: {
-        let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 100.0);
+        let mut temp = glm::perspective_lh_zo(800.0 / 600.0, f32::to_radians(50.0), 0.1, 1000.0);
         temp[(1, 1)] *= -1.0;
         temp
       },
