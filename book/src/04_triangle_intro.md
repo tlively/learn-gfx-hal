@@ -423,7 +423,8 @@ the GPU. We take a few shader modules and put them together into a
 
 For this to work, you have to use the `shaderc-rs` crate, which takes _very_
 long to build that first time because it's actually using `build.rs` to download
-a relatively massive C++ lib and then link that in.
+a relatively massive C++ lib and then link that in. Be sure to see the `shaderc-rs`
+[setup instructions](https://github.com/google/shaderc-rs#setup).
 
 1) We open a compiler
 2) We compile some Vertex Shader source. This is "where do the points go on the
