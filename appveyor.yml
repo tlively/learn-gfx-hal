@@ -12,6 +12,13 @@ environment:
       target: i686-pc-windows-msvc
     # GNU is not supported by shaderc-rs :(
 
+branches:
+  only:
+    - staging
+    - trying
+    - master
+    - lokathor
+
 install:
   - appveyor DownloadFile https://win.rustup.rs/ -FileName rustup-init.exe
   - rustup-init -y --default-toolchain %channel% --default-host %target%
