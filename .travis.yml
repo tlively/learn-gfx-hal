@@ -11,6 +11,13 @@ rust:
 cache:
   cargo
 
+branches:
+  only:
+    - staging
+    - trying
+    - master
+    - lokathor
+
 before_script:
   - |
     if [[ $TRAVIS_OS_NAME == "linux" ]]; then \
