@@ -1638,9 +1638,10 @@ self
   .destroy_swapchain(ManuallyDrop::into_inner(read(&mut self.swapchain)));
 ```
 
-And for our two final items we just use the `ManuallyDrop::drop` style:
+And for our three final items we just use the `ManuallyDrop::drop` style:
 
 ```rust
+ManuallyDrop::drop(&mut self.queue_group);
 ManuallyDrop::drop(&mut self.device);
 ManuallyDrop::drop(&mut self._instance);
 ```
@@ -1663,7 +1664,7 @@ pub struct HalState {
   image_views: Vec<(<back::Backend as Backend>::ImageView)>,
   render_pass: ManuallyDrop<<back::Backend as Backend>::RenderPass>,
   render_area: Rect,
-  queue_group: QueueGroup<back::Backend, Graphics>,
+  queue_group: ManuallyDrop<QueueGroup<back::Backend, Graphics>>,
   swapchain: ManuallyDrop<<back::Backend as Backend>::Swapchain>,
   device: ManuallyDrop<back::Device>,
   _adapter: Adapter<back::Backend>,
