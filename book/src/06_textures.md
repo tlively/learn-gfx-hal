@@ -975,7 +975,7 @@ used as a Sampler descriptor) to that specific DescriptorSet.
           array_offset: 0,
           descriptors: Some(gfx_hal::pso::Descriptor::Image(
             texture.image_view.deref(),
-            Layout::Undefined,
+            Layout::ShaderReadOnlyOptimal
           )),
         },
         gfx_hal::pso::DescriptorSetWrite {

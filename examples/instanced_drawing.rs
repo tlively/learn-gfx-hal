@@ -47,12 +47,12 @@ use gfx_hal::{
   Backend, DescriptorPool, Gpu, Graphics, IndexType, Instance, Primitive, QueueFamily, Surface,
 };
 use nalgebra_glm as glm;
+use rand::prelude::*;
 use std::{collections::HashSet, time::Instant};
 use winit::{
   dpi::LogicalSize, CreationError, DeviceEvent, ElementState, Event, EventsLoop, KeyboardInput,
   MouseButton, VirtualKeyCode, Window, WindowBuilder, WindowEvent,
 };
-use rand::prelude::*;
 
 pub const MAX_CUBES: usize = 50000;
 
@@ -109,7 +109,7 @@ pub static CREATURE_BYTES: &[u8] = include_bytes!("creature.png");
 /// It can trigger UB if you upcast from a low alignment to a higher alignment
 /// type. You'll be sad.
 pub fn cast_slice<T: Pod, U: Pod>(ts: &[T]) -> Option<&[U]> {
-  use core::mem::{align_of, size_of};
+  use core::mem::align_of;
   // Handle ZST (this all const folds)
   if size_of::<T>() == 0 || size_of::<U>() == 0 {
     if size_of::<T>() == size_of::<U>() {
@@ -928,7 +928,7 @@ impl HalState {
           array_offset: 0,
           descriptors: Some(gfx_hal::pso::Descriptor::Image(
             texture.image_view.deref(),
-            Layout::Undefined,
+            Layout::ShaderReadOnlyOptimal,
           )),
         },
         gfx_hal::pso::DescriptorSetWrite {
@@ -1061,7 +1061,7 @@ impl HalState {
           binding: 1,
           stride: (size_of::<f32>() * 16) as ElemStride,
           rate: 1,
-        }
+        },
       ];
 
       let mut attributes: Vec<AttributeDesc> = Vertex::attributes();
@@ -1327,14 +1327,19 @@ impl HalState {
     // Since we just waited for the previous submission's fence we know we can write data to the buffer
     // We write each model matrix given (up to a max of MAX_CUBES because that's what we allocated space for)
     unsafe {
-      let mut data_target = self.device
-        .acquire_mapping_writer(&cube_instance_buf.memory, 0..cube_instance_buf.requirements.size)
+      let mut data_target = self
+        .device
+        .acquire_mapping_writer(
+          &cube_instance_buf.memory,
+          0..cube_instance_buf.requirements.size,
+        )
         .map_err(|_| "Failed to acquire an instance buffer mapping writer!")?;
       let stride = 16;
       for i in 0..models.len().min(MAX_CUBES) {
-        data_target[i*stride..(i+1)*stride].copy_from_slice(&models[i].data);
+        data_target[i * stride..(i + 1) * stride].copy_from_slice(&models[i].data);
       }
-      self.device
+      self
+        .device
         .release_mapping_writer(data_target)
         .map_err(|_| "Couldn't release an instance buffer mapping writer!")?;
     }
@@ -1361,7 +1366,7 @@ impl HalState {
           vec![
             (self.cube_vertices.buffer.deref(), 0),
             (cube_instance_buf.buffer.deref(), 0),
-          ]
+          ],
         );
         encoder.bind_index_buffer(IndexBufferView {
           buffer: &self.cube_indexes.buffer,
